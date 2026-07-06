@@ -257,9 +257,9 @@ export function cleanStream(base: AssistantMessageEventStream): AssistantMessage
       const fallback: AssistantMessage = output ?? {
         role: "assistant",
         content: [],
-        api: "openai-completions",
-        provider: "minimax-openai",
-        model: "MiniMax-M3",
+        api: "unknown",
+        provider: "unknown",
+        model: "unknown",
         usage: {
           input: 0,
           output: 0,

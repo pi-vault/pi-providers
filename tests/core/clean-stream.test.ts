@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import type {
   AssistantMessage,
   AssistantMessageEvent,
+  AssistantMessageEventStream,
   TextContent,
   ThinkingContent,
   ToolCall,
@@ -320,6 +321,57 @@ describe("cleanStream", () => {
       expect(errors.length).toBe(1);
       if (errors[0].type === "error") {
         expect(errors[0].error.errorMessage).toBe("upstream fail");
+      }
+    });
+
+    it("catches exceptions thrown during iteration and emits error event", async () => {
+      const throwingStream = {
+        [Symbol.asyncIterator]() {
+          return {
+            next() {
+              return Promise.reject(new Error("stream exploded"));
+            },
+          };
+        },
+      } as unknown as AssistantMessageEventStream;
+
+      const events = await collectEvents(cleanStream(throwingStream));
+      const errors = events.filter((e) => e.type === "error");
+      expect(errors.length).toBe(1);
+      if (errors[0].type === "error") {
+        expect(errors[0].error.errorMessage).toBe("stream exploded");
+        expect(errors[0].error.provider).toBe("unknown");
+        expect(errors[0].error.model).toBe("unknown");
+      }
+    });
+
+    it("uses output metadata if available when catching exceptions", async () => {
+      const partial = makePartial();
+      let callCount = 0;
+      const throwAfterStartStream = {
+        [Symbol.asyncIterator]() {
+          return {
+            next() {
+              callCount++;
+              if (callCount === 1) {
+                return Promise.resolve({
+                  value: { type: "start" as const, partial },
+                  done: false,
+                });
+              }
+              return Promise.reject(new Error("mid-stream crash"));
+            },
+          };
+        },
+      } as unknown as AssistantMessageEventStream;
+
+      const events = await collectEvents(cleanStream(throwAfterStartStream));
+      const errors = events.filter((e) => e.type === "error");
+      expect(errors.length).toBe(1);
+      if (errors[0].type === "error") {
+        expect(errors[0].error.errorMessage).toBe("mid-stream crash");
+        expect(errors[0].error.provider).toBe("minimax-openai");
+        expect(errors[0].error.model).toBe("MiniMax-M3");
       }
     });
   });
