@@ -1,5 +1,3 @@
-// src/providers/minimax-openai.ts
-
 import type { OpenAICompletionsCompat } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 

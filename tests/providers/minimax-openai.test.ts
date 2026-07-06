@@ -1,5 +1,3 @@
-// tests/providers/minimax-openai.test.ts
-
 import { describe, expect, it, vi } from "vitest";
 import { makeProvider, M3_MODEL_CONFIG, M3_COMPAT } from "../../src/providers/minimax-openai.ts";
 
