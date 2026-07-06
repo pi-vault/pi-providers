@@ -1,3 +1,5 @@
+// tests/providers/minimax-openai.test.ts
+
 import { describe, expect, it, vi } from "vitest";
 import { makeProvider, M3_MODEL_CONFIG, M3_COMPAT } from "../../src/providers/minimax-openai.ts";
 
@@ -16,14 +18,24 @@ describe("makeProvider", () => {
     expect(config.name).toBe("MiniMax (OpenAI)");
   });
 
-  it("registers with api set to openai-completions", () => {
+  it("provides a custom streamSimple function", () => {
     const registerProvider = vi.fn();
     const mockPi = { registerProvider } as unknown as Parameters<typeof makeProvider>[0];
 
     makeProvider(mockPi, "minimax-openai", "https://api.minimax.io/v1", "$MINIMAX_API_KEY", "MiniMax (OpenAI)");
 
     const [, config] = registerProvider.mock.calls[0];
-    expect(config.api).toBe("openai-completions");
+    expect(typeof config.streamSimple).toBe("function");
+  });
+
+  it("sets api to the provider name (custom api id for routing)", () => {
+    const registerProvider = vi.fn();
+    const mockPi = { registerProvider } as unknown as Parameters<typeof makeProvider>[0];
+
+    makeProvider(mockPi, "minimax-openai", "https://api.minimax.io/v1", "$MINIMAX_API_KEY", "MiniMax (OpenAI)");
+
+    const [, config] = registerProvider.mock.calls[0];
+    expect(config.api).toBe("minimax-openai");
   });
 
   it("registers a single MiniMax-M3 model", () => {
@@ -38,21 +50,16 @@ describe("makeProvider", () => {
     expect(config.models[0].reasoning).toBe(true);
     expect(config.models[0].input).toEqual(["text", "image"]);
   });
-
-  it("does not provide a custom streamSimple", () => {
-    const registerProvider = vi.fn();
-    const mockPi = { registerProvider } as unknown as Parameters<typeof makeProvider>[0];
-
-    makeProvider(mockPi, "minimax-openai", "https://api.minimax.io/v1", "$MINIMAX_API_KEY", "MiniMax (OpenAI)");
-
-    const [, config] = registerProvider.mock.calls[0];
-    expect(config.streamSimple).toBeUndefined();
-  });
 });
 
 describe("M3_MODEL_CONFIG", () => {
   it("has correct pricing", () => {
-    expect(M3_MODEL_CONFIG.cost).toEqual({ input: 0.6, output: 2.4, cacheRead: 0.12, cacheWrite: 0 });
+    expect(M3_MODEL_CONFIG.cost).toEqual({
+      input: 0.6,
+      output: 2.4,
+      cacheRead: 0.12,
+      cacheWrite: 0,
+    });
   });
 
   it("has correct context and output limits", () => {

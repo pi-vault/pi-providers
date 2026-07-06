@@ -1,5 +1,16 @@
-import type { OpenAICompletionsCompat } from "@earendil-works/pi-ai";
+// src/providers/minimax-openai.ts
+
+import type {
+  Api,
+  AssistantMessageEventStream,
+  Context,
+  Model,
+  OpenAICompletionsCompat,
+  SimpleStreamOptions,
+} from "@earendil-works/pi-ai";
+import { getApiProvider } from "@earendil-works/pi-ai/compat";
 import type { ExtensionAPI, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
+import { cleanStream } from "../core/clean-stream.ts";
 
 export const M3_COMPAT: OpenAICompletionsCompat = {
   supportsStore: false,
@@ -30,7 +41,21 @@ export function makeProvider(
     name: displayName,
     baseUrl,
     apiKey,
-    api: "openai-completions",
+    api: name as Api,
+    streamSimple(
+      model: Model<Api>,
+      context: Context,
+      options?: SimpleStreamOptions,
+    ): AssistantMessageEventStream {
+      const driver = getApiProvider("openai-completions");
+      if (!driver) throw new Error("openai-completions api provider not registered");
+      const base = driver.streamSimple(
+        { ...model, api: "openai-completions" },
+        context,
+        options,
+      );
+      return cleanStream(base);
+    },
     models: [M3_MODEL_CONFIG],
   });
 }
