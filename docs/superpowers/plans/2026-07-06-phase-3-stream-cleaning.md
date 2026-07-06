@@ -4,7 +4,7 @@
 
 **Goal:** Implement the `cleanStream` transformer and upgrade the providers to use a custom `streamSimple` that delegates to Pi's built-in `openai-completions` driver wrapped with real-time stream cleaning — fixing both fake-tool-call and thinking-leakage bugs.
 
-**Architecture:** `cleanStream` consumes events from the base `AssistantMessageEventStream`, merges multiple thinking blocks into one (deduplicating re-streamed reasoning prefixes), strips `<think>` tags from text deltas using `ThinkScanner`, and remaps content indices for tool calls. The provider factory is upgraded from bare `api: "openai-completions"` registration to a custom `streamSimple` that calls `getApiProvider("openai-completions").streamSimple()` and pipes through `cleanStream`.
+**Architecture:** `cleanStream` consumes events from the base `AssistantMessageEventStream`, merges multiple thinking blocks into one (deduplicating re-streamed reasoning prefixes), strips `<think>` tags from text deltas using `ThinkScanner`, and remaps content indices for tool calls. The provider factory is upgraded from bare `api: "openai-completions"` registration to a custom `streamSimple` with `api` set to the provider name (custom api id), which calls `getApiProvider("openai-completions").streamSimple()` and pipes through `cleanStream`.
 
 **Tech Stack:** TypeScript (erasable syntax only), `@earendil-works/pi-ai` (`getApiProvider` from `/compat`, `createAssistantMessageEventStream`, types), `@earendil-works/pi-coding-agent` (`ExtensionAPI`), Vitest.
 
@@ -751,14 +751,14 @@ describe("makeProvider", () => {
     expect(typeof config.streamSimple).toBe("function");
   });
 
-  it("does not set api at provider level (streamSimple handles routing)", () => {
+  it("sets api to the provider name (custom api id for routing)", () => {
     const registerProvider = vi.fn();
     const mockPi = { registerProvider } as unknown as Parameters<typeof makeProvider>[0];
 
     makeProvider(mockPi, "minimax-openai", "https://api.minimax.io/v1", "$MINIMAX_API_KEY", "MiniMax (OpenAI)");
 
     const [, config] = registerProvider.mock.calls[0];
-    expect(config.api).toBeUndefined();
+    expect(config.api).toBe("minimax-openai");
   });
 
   it("registers a single MiniMax-M3 model", () => {
@@ -811,7 +811,7 @@ describe("M3_COMPAT", () => {
 - [ ] **Step 2: Run tests to verify the new assertions fail**
 
 Run: `pnpm run test -- tests/providers/minimax-openai.test.ts`
-Expected: FAIL on "provides a custom streamSimple function" (Phase 1 version has no streamSimple) and "does not set api at provider level" (Phase 1 sets `api: "openai-completions"`)
+Expected: FAIL on "provides a custom streamSimple function" (Phase 1 version has no streamSimple) and "sets api to the provider name" (Phase 1 sets `api: "openai-completions"`, not `"minimax-openai"`)
 
 - [ ] **Step 3: Update provider factory to use custom streamSimple**
 
@@ -861,6 +861,7 @@ export function makeProvider(
     name: displayName,
     baseUrl,
     apiKey,
+    api: name as Api,
     streamSimple(
       model: Model<Api>,
       context: Context,
@@ -896,10 +897,10 @@ Expected: lint, typecheck, and all tests pass
 git add src/providers/minimax-openai.ts tests/providers/minimax-openai.test.ts
 git commit -m "feat: upgrade provider to custom streamSimple with cleanStream
 
-Replaces bare api registration with a custom streamSimple that
-delegates to the built-in openai-completions driver and wraps the
-stream with cleanStream for thinking deduplication and <think>
-tag removal."
+Uses a custom api id (the provider name) so only our models route
+through our handler. streamSimple delegates to the built-in
+openai-completions driver and wraps the stream with cleanStream
+for thinking deduplication and <think> tag removal."
 ```
 
 ---
@@ -957,6 +958,7 @@ git commit -m "chore: apply formatting fixes"
 
 The extension is complete:
 - `minimax-openai / MiniMax-M3` and `minimax-openai-cn / MiniMax-M3` route through OpenAI-compatible endpoints
+- Custom api ids ensure only our models route through our handler (no global driver override)
 - Custom `streamSimple` delegates to Pi's built-in `openai-completions` driver
 - `cleanStream` wraps the output:
   - Multiple thinking blocks merged into one
@@ -985,9 +987,18 @@ When Pi calls our `streamSimple(model, context, options)`:
 4. We wrap the returned event stream with `cleanStream` before returning to Pi
 5. Pi's agent loop consumes our cleaned stream for rendering and tool execution
 
-### Why override model.api
+### Why use a custom api id
 
-Our provider doesn't set `api` at the provider config level (unlike Phase 1). Instead, `streamSimple` overrides `model.api` when calling the driver. This is because:
-- The provider's registered api determines which built-in stream handler Pi uses when NO custom `streamSimple` is provided
-- When we provide `streamSimple`, we handle routing ourselves
-- The driver needs `api: "openai-completions"` on the model to know which protocol to speak
+Pi's `ModelRegistry.validateProviderConfig` requires `api` when `streamSimple` is provided:
+```
+if (config.streamSimple && !config.api) {
+    throw new Error(`Provider ${providerName}: "api" is required when registering streamSimple.`);
+}
+```
+
+When `streamSimple` is registered, Pi calls `registerApiProvider` with `config.api` as the api id. This means **all models with that api field** route through our handler. If we used `api: "openai-completions"`, we'd override the built-in driver globally for ALL providers.
+
+Instead, we use the provider name as a custom api id (`api: name as Api`). This ensures:
+- Only our models (whose api field is set to the provider name) route through our `streamSimple`
+- Other providers' models continue using the built-in openai-completions driver
+- In `streamSimple`, we override `model.api` to `"openai-completions"` when calling the driver so it knows which protocol to speak
