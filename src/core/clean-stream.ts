@@ -36,22 +36,10 @@ export function cleanStream(base: AssistantMessageEventStream): AssistantMessage
     let sawBaseThinking = false;
     let segment: ThinkingSegment | undefined;
 
-    const ensureOutput = (partial: AssistantMessage): AssistantMessage => {
-      if (!output) output = { ...partial, content: [] };
-      return output;
-    };
-
     const syncMeta = (partial: AssistantMessage) => {
-      if (!output) {
-        ensureOutput(partial);
-        return;
-      }
-      for (const key of Object.keys(partial)) {
-        if (key === "content") continue;
-        (output as unknown as Record<string, unknown>)[key] = (
-          partial as unknown as Record<string, unknown>
-        )[key];
-      }
+      if (!output) { output = { ...partial, content: [] }; return; }
+      const { content: _, ...meta } = partial;
+      Object.assign(output, meta);
     };
 
     const ensureSegment = (): ThinkingSegment => {
@@ -132,8 +120,8 @@ export function cleanStream(base: AssistantMessageEventStream): AssistantMessage
       for await (const ev of base) {
         switch (ev.type) {
           case "start": {
-            ensureOutput(ev.partial);
-            out.push({ type: "start", partial: output! });
+            if (!output) output = { ...ev.partial, content: [] };
+            out.push({ type: "start", partial: output });
             break;
           }
           case "thinking_start": {
