@@ -13,6 +13,7 @@
 **Parent plan:** `docs/superpowers/plans/2026-07-06-m3-tool-hardening.md` (Phase 6)
 
 **Prerequisite:** All previous phases (4-8) must be complete. The following files must exist:
+
 - `src/core/harden-tool-calls.ts` (Phases 4-6)
 - `src/core/normalize-tool-results.ts` (Phase 8)
 - `tests/core/harden-tool-calls.test.ts` (Phases 4-7)
@@ -22,8 +23,8 @@
 
 ## File Map
 
-| File | Action | Responsibility |
-|------|--------|----------------|
+| File                              | Action | Responsibility                              |
+| --------------------------------- | ------ | ------------------------------------------- |
 | `src/providers/minimax-openai.ts` | Modify | Add imports, update `streamSimple` pipeline |
 
 ---
@@ -31,6 +32,7 @@
 ### Task 9: Wire `hardenToolCalls` and `normalizeToolResults` into the provider
 
 **Files:**
+
 - Modify: `src/providers/minimax-openai.ts`
 
 - [ ] **Step 1: Update imports**
@@ -84,6 +86,7 @@ Replace it with:
 ```
 
 Two changes:
+
 1. `normalizeToolResults(context)` applied before the driver call (pre-request reordering)
 2. `hardenToolCalls(base)` wraps the base stream before `cleanStream` (post-response hardening)
 
@@ -137,6 +140,7 @@ Expected: lint + typecheck + tests all pass
 
 Run: `git diff main...HEAD --stat` and `git log --oneline main...HEAD`
 Verify:
+
 - 4 new files created (2 source, 2 test):
   - `src/core/harden-tool-calls.ts`
   - `src/core/normalize-tool-results.ts`
