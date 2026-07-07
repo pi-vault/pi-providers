@@ -235,6 +235,36 @@ describe("hardenToolCalls", () => {
       }
     });
 
+    it("uses lastPartial metadata when catching iteration errors mid-stream", async () => {
+      const partial = makePartial();
+      let callCount = 0;
+      const throwAfterStartStream = {
+        [Symbol.asyncIterator]() {
+          return {
+            next() {
+              callCount++;
+              if (callCount === 1) {
+                return Promise.resolve({
+                  value: { type: "start" as const, partial },
+                  done: false,
+                });
+              }
+              return Promise.reject(new Error("mid-stream crash"));
+            },
+          };
+        },
+      } as unknown as AssistantMessageEventStream;
+
+      const events = await collectEvents(hardenToolCalls(throwAfterStartStream));
+      const errors = events.filter((e) => e.type === "error");
+      expect(errors).toHaveLength(1);
+      if (errors[0].type === "error") {
+        expect(errors[0].error.errorMessage).toBe("mid-stream crash");
+        expect(errors[0].error.provider).toBe("minimax-openai");
+        expect(errors[0].error.model).toBe("MiniMax-M3");
+      }
+    });
+
     it("propagates base stream error events unchanged", async () => {
       const base = createAssistantMessageEventStream();
       const partial = makePartial();
@@ -253,6 +283,83 @@ describe("hardenToolCalls", () => {
       expect(errors).toHaveLength(1);
       if (errors[0].type === "error") {
         expect(errors[0].error.errorMessage).toBe("api timeout");
+      }
+    });
+
+    it("patches error event content to reflect repaired tool call", async () => {
+      const base = createAssistantMessageEventStream();
+      const partial = makePartial();
+      const brokenToolCall: ToolCall = {
+        type: "toolCall",
+        id: "tc1",
+        name: "edit",
+        arguments: {},
+      };
+      partial.content.push(brokenToolCall);
+
+      const rawArgs = `{"path":"/bar.ts","content":"line1\nline2"}`;
+
+      pushEvents(base, [
+        { type: "start", partial },
+        { type: "toolcall_start", contentIndex: 0, partial },
+        { type: "toolcall_delta", contentIndex: 0, delta: rawArgs, partial },
+        { type: "toolcall_end", contentIndex: 0, toolCall: brokenToolCall, partial },
+        {
+          type: "error",
+          reason: "error",
+          error: { ...partial, stopReason: "error", errorMessage: "api timeout" },
+        },
+      ]);
+
+      const events = await collectEvents(hardenToolCalls(base));
+      const error = events.find((e) => e.type === "error");
+      expect(error).toBeDefined();
+      if (error?.type === "error") {
+        expect(error.error.errorMessage).toBe("api timeout");
+        const tc = error.error.content[0] as ToolCall;
+        expect(tc.arguments).toEqual({ path: "/bar.ts", content: "line1\nline2" });
+      }
+    });
+  });
+
+  describe("multiple tool calls", () => {
+    it("handles multiple tool calls at different content indices independently", async () => {
+      const base = createAssistantMessageEventStream();
+      const partial = makePartial();
+      const brokenToolCall1: ToolCall = {
+        type: "toolCall",
+        id: "tc1",
+        name: "edit",
+        arguments: {},
+      };
+      const brokenToolCall2: ToolCall = {
+        type: "toolCall",
+        id: "tc2",
+        name: "read",
+        arguments: {},
+      };
+      partial.content.push(brokenToolCall1, brokenToolCall2);
+
+      const rawArgs1 = `{"path":"/foo.ts","content":"line1\nline2"}`;
+      const rawArgs2 = `{"path":"/bar.ts"}`;
+
+      pushEvents(base, [
+        { type: "start", partial },
+        { type: "toolcall_start", contentIndex: 0, partial },
+        { type: "toolcall_delta", contentIndex: 0, delta: rawArgs1, partial },
+        { type: "toolcall_end", contentIndex: 0, toolCall: brokenToolCall1, partial },
+        { type: "toolcall_start", contentIndex: 1, partial },
+        { type: "toolcall_delta", contentIndex: 1, delta: rawArgs2, partial },
+        { type: "toolcall_end", contentIndex: 1, toolCall: brokenToolCall2, partial },
+        { type: "done", reason: "toolUse", message: partial },
+      ]);
+
+      const events = await collectEvents(hardenToolCalls(base));
+      const toolEnds = events.filter((e) => e.type === "toolcall_end");
+      expect(toolEnds).toHaveLength(2);
+      if (toolEnds[0]?.type === "toolcall_end" && toolEnds[1]?.type === "toolcall_end") {
+        expect(toolEnds[0].toolCall.arguments).toEqual({ path: "/foo.ts", content: "line1\nline2" });
+        expect(toolEnds[1].toolCall.arguments).toEqual({ path: "/bar.ts" });
       }
     });
   });
