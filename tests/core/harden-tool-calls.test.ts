@@ -363,4 +363,124 @@ describe("hardenToolCalls", () => {
       }
     });
   });
+
+  describe("collapsed-arg detection", () => {
+    it("emits diagnostic text when array contains empty objects", async () => {
+      const base = createAssistantMessageEventStream();
+      const partial = makePartial();
+      const collapsedToolCall: ToolCall = {
+        type: "toolCall",
+        id: "tc1",
+        name: "questionnaire",
+        arguments: { questions: [{}] },
+      };
+      partial.content.push(collapsedToolCall);
+
+      pushEvents(base, [
+        { type: "start", partial },
+        { type: "toolcall_start", contentIndex: 0, partial },
+        {
+          type: "toolcall_delta",
+          contentIndex: 0,
+          delta: '{"questions":[{}]}',
+          partial,
+        },
+        {
+          type: "toolcall_end",
+          contentIndex: 0,
+          toolCall: collapsedToolCall,
+          partial,
+        },
+        { type: "done", reason: "toolUse", message: partial },
+      ]);
+
+      const events = await collectEvents(hardenToolCalls(base));
+
+      // Tool call should still pass through
+      const toolEnd = events.find((e) => e.type === "toolcall_end");
+      expect(toolEnd).toBeDefined();
+
+      // Diagnostic text should be emitted
+      const textDeltas = events
+        .filter((e) => e.type === "text_delta")
+        .map((e) => (e.type === "text_delta" ? e.delta : ""));
+      const fullText = textDeltas.join("");
+      expect(fullText).toContain("questionnaire");
+      expect(fullText).toContain("empty nested arguments");
+      expect(fullText).toContain("Do not retry");
+    });
+
+    it("does not emit diagnostic for valid nested args", async () => {
+      const base = createAssistantMessageEventStream();
+      const partial = makePartial();
+      const validToolCall: ToolCall = {
+        type: "toolCall",
+        id: "tc1",
+        name: "questionnaire",
+        arguments: {
+          questions: [
+            {
+              type: "single-choice",
+              id: "q1",
+              header: "Test",
+              prompt: "Pick one",
+              options: [],
+            },
+          ],
+        },
+      };
+      partial.content.push(validToolCall);
+
+      pushEvents(base, [
+        { type: "start", partial },
+        { type: "toolcall_start", contentIndex: 0, partial },
+        {
+          type: "toolcall_delta",
+          contentIndex: 0,
+          delta: JSON.stringify(validToolCall.arguments),
+          partial,
+        },
+        {
+          type: "toolcall_end",
+          contentIndex: 0,
+          toolCall: validToolCall,
+          partial,
+        },
+        { type: "done", reason: "toolUse", message: partial },
+      ]);
+
+      const events = await collectEvents(hardenToolCalls(base));
+      const textEvents = events.filter((e) => e.type === "text_delta");
+      expect(textEvents.length).toBe(0);
+    });
+
+    it("does not flag empty top-level args (those are JSON repair territory)", async () => {
+      const base = createAssistantMessageEventStream();
+      const partial = makePartial();
+      const emptyToolCall: ToolCall = {
+        type: "toolCall",
+        id: "tc1",
+        name: "bash",
+        arguments: {},
+      };
+      partial.content.push(emptyToolCall);
+
+      pushEvents(base, [
+        { type: "start", partial },
+        { type: "toolcall_start", contentIndex: 0, partial },
+        { type: "toolcall_delta", contentIndex: 0, delta: "{}", partial },
+        {
+          type: "toolcall_end",
+          contentIndex: 0,
+          toolCall: emptyToolCall,
+          partial,
+        },
+        { type: "done", reason: "toolUse", message: partial },
+      ]);
+
+      const events = await collectEvents(hardenToolCalls(base));
+      const textEvents = events.filter((e) => e.type === "text_delta");
+      expect(textEvents.length).toBe(0);
+    });
+  });
 });
