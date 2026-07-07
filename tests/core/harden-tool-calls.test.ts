@@ -1,60 +1,3 @@
-# Phase 4: JSON Repair Implementation Plan
-
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-
-**Goal:** Create the `hardenToolCalls` stream wrapper with defensive JSON repair for tool-call arguments that the driver fails to parse.
-
-**Architecture:** A new stream wrapper (`hardenToolCalls`) that sits between the base OpenAI driver stream and `cleanStream`. It accumulates raw tool-call argument deltas and, when the driver produces empty arguments (`{}`), attempts a second-chance parse via `parseJsonWithRepair`. The wrapper also patches `done`/`error` terminal events so the final message reflects any repaired tool calls.
-
-**Context:** The upstream driver (`openai-completions`) already uses `parseStreamingJson` → `repairJson` which handles most control-character cases. This wrapper is a **defensive second-chance layer** for edge cases where the driver's parse chain still fails (e.g., `partial-json` library interference, future model output patterns, or complex escape sequences that confuse `repairJson`'s string-boundary tracking).
-
-**Tech Stack:** TypeScript, `@earendil-works/pi-ai` (types, `createAssistantMessageEventStream`, `parseJsonWithRepair`), Vitest
-
-**Spec:** `docs/superpowers/specs/2026-07-06-m3-tool-hardening-design.md`
-
-**Parent plan:** `docs/superpowers/plans/2026-07-06-m3-tool-hardening.md` (Phase 4)
-
----
-
-## File Map
-
-| File | Action | Responsibility |
-|------|--------|----------------|
-| `src/core/harden-tool-calls.ts` | Create | Stream wrapper with JSON repair |
-| `tests/core/harden-tool-calls.test.ts` | Create | Tests for JSON repair behavior |
-
----
-
-## Design Notes
-
-### Pipeline position
-
-```
-MiniMax API → base stream → hardenToolCalls → cleanStream → Pi
-```
-
-`hardenToolCalls` runs BEFORE `cleanStream` because it needs to see tool-call events at their original content indices (before `cleanStream` remaps them).
-
-### Terminal event patching
-
-When a tool call is repaired, the `done` event's `message.content` must also reflect the fix. Without this, consumers that read the terminal message directly (rather than replaying individual events) would see stale `{}` arguments.
-
-The wrapper tracks repaired tool calls by content index and patches `done`/`error` messages before forwarding them.
-
-### Error handling pattern
-
-Matches `cleanStream`: if the base stream's async iterator throws, emit an `error` event using whatever output state has accumulated (provider/model metadata when available, generic fallback otherwise).
-
----
-
-### Task 1: Tests for hardenToolCalls
-
-**Files:**
-- Create: `tests/core/harden-tool-calls.test.ts`
-
-- [ ] **Step 1: Write the failing tests**
-
-```typescript
 // tests/core/harden-tool-calls.test.ts
 
 import { describe, expect, it } from "vitest";
@@ -292,6 +235,36 @@ describe("hardenToolCalls", () => {
       }
     });
 
+    it("uses lastPartial metadata when catching iteration errors mid-stream", async () => {
+      const partial = makePartial();
+      let callCount = 0;
+      const throwAfterStartStream = {
+        [Symbol.asyncIterator]() {
+          return {
+            next() {
+              callCount++;
+              if (callCount === 1) {
+                return Promise.resolve({
+                  value: { type: "start" as const, partial },
+                  done: false,
+                });
+              }
+              return Promise.reject(new Error("mid-stream crash"));
+            },
+          };
+        },
+      } as unknown as AssistantMessageEventStream;
+
+      const events = await collectEvents(hardenToolCalls(throwAfterStartStream));
+      const errors = events.filter((e) => e.type === "error");
+      expect(errors).toHaveLength(1);
+      if (errors[0].type === "error") {
+        expect(errors[0].error.errorMessage).toBe("mid-stream crash");
+        expect(errors[0].error.provider).toBe("minimax-openai");
+        expect(errors[0].error.model).toBe("MiniMax-M3");
+      }
+    });
+
     it("propagates base stream error events unchanged", async () => {
       const base = createAssistantMessageEventStream();
       const partial = makePartial();
@@ -312,190 +285,82 @@ describe("hardenToolCalls", () => {
         expect(errors[0].error.errorMessage).toBe("api timeout");
       }
     });
+
+    it("patches error event content to reflect repaired tool call", async () => {
+      const base = createAssistantMessageEventStream();
+      const partial = makePartial();
+      const brokenToolCall: ToolCall = {
+        type: "toolCall",
+        id: "tc1",
+        name: "edit",
+        arguments: {},
+      };
+      partial.content.push(brokenToolCall);
+
+      const rawArgs = `{"path":"/bar.ts","content":"line1\nline2"}`;
+
+      pushEvents(base, [
+        { type: "start", partial },
+        { type: "toolcall_start", contentIndex: 0, partial },
+        { type: "toolcall_delta", contentIndex: 0, delta: rawArgs, partial },
+        { type: "toolcall_end", contentIndex: 0, toolCall: brokenToolCall, partial },
+        {
+          type: "error",
+          reason: "error",
+          error: { ...partial, stopReason: "error", errorMessage: "api timeout" },
+        },
+      ]);
+
+      const events = await collectEvents(hardenToolCalls(base));
+      const error = events.find((e) => e.type === "error");
+      expect(error).toBeDefined();
+      if (error?.type === "error") {
+        expect(error.error.errorMessage).toBe("api timeout");
+        const tc = error.error.content[0] as ToolCall;
+        expect(tc.arguments).toEqual({ path: "/bar.ts", content: "line1\nline2" });
+      }
+    });
+  });
+
+  describe("multiple tool calls", () => {
+    it("handles multiple tool calls at different content indices independently", async () => {
+      const base = createAssistantMessageEventStream();
+      const partial = makePartial();
+      const brokenToolCall1: ToolCall = {
+        type: "toolCall",
+        id: "tc1",
+        name: "edit",
+        arguments: {},
+      };
+      const brokenToolCall2: ToolCall = {
+        type: "toolCall",
+        id: "tc2",
+        name: "read",
+        arguments: {},
+      };
+      partial.content.push(brokenToolCall1, brokenToolCall2);
+
+      const rawArgs1 = `{"path":"/foo.ts","content":"line1\nline2"}`;
+      const rawArgs2 = `{"path":"/bar.ts"}`;
+
+      pushEvents(base, [
+        { type: "start", partial },
+        { type: "toolcall_start", contentIndex: 0, partial },
+        { type: "toolcall_delta", contentIndex: 0, delta: rawArgs1, partial },
+        { type: "toolcall_end", contentIndex: 0, toolCall: brokenToolCall1, partial },
+        { type: "toolcall_start", contentIndex: 1, partial },
+        { type: "toolcall_delta", contentIndex: 1, delta: rawArgs2, partial },
+        { type: "toolcall_end", contentIndex: 1, toolCall: brokenToolCall2, partial },
+        { type: "done", reason: "toolUse", message: partial },
+      ]);
+
+      const events = await collectEvents(hardenToolCalls(base));
+      const toolEnds = events.filter((e) => e.type === "toolcall_end");
+      expect(toolEnds).toHaveLength(2);
+      if (toolEnds[0]?.type === "toolcall_end" && toolEnds[1]?.type === "toolcall_end") {
+        expect(toolEnds[0].toolCall.arguments).toEqual({ path: "/foo.ts", content: "line1\nline2" });
+        expect(toolEnds[1].toolCall.arguments).toEqual({ path: "/bar.ts" });
+      }
+    });
   });
 });
-```
-
-- [ ] **Step 2: Run tests to verify they fail**
-
-Run: `pnpm test -- tests/core/harden-tool-calls.test.ts`
-Expected: FAIL (cannot resolve `hardenToolCalls`)
-
-- [ ] **Step 3: Commit failing tests**
-
-```bash
-git add tests/core/harden-tool-calls.test.ts
-git commit -m "test: add failing tests for hardenToolCalls JSON repair"
-```
-
-### Task 2: Implement hardenToolCalls
-
-**Files:**
-- Create: `src/core/harden-tool-calls.ts`
-
-- [ ] **Step 1: Write the implementation**
-
-```typescript
-// src/core/harden-tool-calls.ts
-
-import type {
-  AssistantMessage,
-  AssistantMessageEventStream,
-  ToolCall,
-} from "@earendil-works/pi-ai";
-import {
-  createAssistantMessageEventStream,
-  parseJsonWithRepair,
-} from "@earendil-works/pi-ai";
-
-/**
- * Returns true when the parsed arguments object is effectively empty —
- * either `{}` or has zero own-keys.
- */
-function isEmptyArgs(args: Record<string, unknown>): boolean {
-  return Object.keys(args).length === 0;
-}
-
-/**
- * Defensive stream wrapper that accumulates raw tool-call argument deltas
- * and attempts a second-chance JSON parse when the upstream driver produces
- * empty arguments (`{}`).
- *
- * Designed to sit between the base driver stream and cleanStream:
- *   base → hardenToolCalls → cleanStream → Pi
- */
-export function hardenToolCalls(
-  base: AssistantMessageEventStream,
-): AssistantMessageEventStream {
-  const out = createAssistantMessageEventStream();
-
-  void (async () => {
-    const argDeltas = new Map<number, string>();
-    const repairs = new Map<number, ToolCall>();
-    let lastPartial: AssistantMessage | undefined;
-
-    try {
-      for await (const ev of base) {
-        switch (ev.type) {
-          case "start": {
-            lastPartial = ev.partial;
-            out.push(ev);
-            break;
-          }
-
-          case "toolcall_start": {
-            argDeltas.set(ev.contentIndex, "");
-            out.push(ev);
-            break;
-          }
-
-          case "toolcall_delta": {
-            const acc = (argDeltas.get(ev.contentIndex) ?? "") + ev.delta;
-            argDeltas.set(ev.contentIndex, acc);
-            out.push(ev);
-            break;
-          }
-
-          case "toolcall_end": {
-            const toolCall = ev.toolCall;
-
-            if (isEmptyArgs(toolCall.arguments)) {
-              const raw = argDeltas.get(ev.contentIndex);
-              if (raw) {
-                try {
-                  const repaired = parseJsonWithRepair<Record<string, unknown>>(raw);
-                  if (!isEmptyArgs(repaired)) {
-                    const fixed: ToolCall = { ...toolCall, arguments: repaired };
-                    repairs.set(ev.contentIndex, fixed);
-                    out.push({ ...ev, toolCall: fixed });
-                    argDeltas.delete(ev.contentIndex);
-                    break;
-                  }
-                } catch {
-                  // Repair also failed — fall through to emit original
-                }
-              }
-            }
-
-            argDeltas.delete(ev.contentIndex);
-            out.push(ev);
-            break;
-          }
-
-          case "done": {
-            if (repairs.size > 0) {
-              const content = [...ev.message.content];
-              for (const [idx, fixed] of repairs) {
-                if (idx < content.length) content[idx] = fixed;
-              }
-              out.push({ ...ev, message: { ...ev.message, content } });
-            } else {
-              out.push(ev);
-            }
-            break;
-          }
-
-          case "error": {
-            if (repairs.size > 0) {
-              const content = [...ev.error.content];
-              for (const [idx, fixed] of repairs) {
-                if (idx < content.length) content[idx] = fixed;
-              }
-              out.push({ ...ev, error: { ...ev.error, content } });
-            } else {
-              out.push(ev);
-            }
-            break;
-          }
-
-          default:
-            out.push(ev);
-        }
-      }
-    } catch (e) {
-      const errorMessage = e instanceof Error ? e.message : String(e);
-      const fallback: AssistantMessage = lastPartial ?? {
-        role: "assistant",
-        content: [],
-        api: "unknown",
-        provider: "unknown",
-        model: "unknown",
-        usage: {
-          input: 0,
-          output: 0,
-          cacheRead: 0,
-          cacheWrite: 0,
-          totalTokens: 0,
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-        },
-        stopReason: "error",
-        timestamp: Date.now(),
-      };
-      out.push({
-        type: "error",
-        reason: "error",
-        error: { ...fallback, stopReason: "error", errorMessage },
-      });
-    }
-  })();
-
-  return out;
-}
-```
-
-- [ ] **Step 2: Run tests to verify they pass**
-
-Run: `pnpm test -- tests/core/harden-tool-calls.test.ts`
-Expected: PASS (7 tests)
-
-- [ ] **Step 3: Run full test suite**
-
-Run: `pnpm test`
-Expected: All tests pass (existing + new)
-
-- [ ] **Step 4: Commit**
-
-```bash
-git add src/core/harden-tool-calls.ts
-git commit -m "feat: implement hardenToolCalls with defensive JSON repair"
-```
