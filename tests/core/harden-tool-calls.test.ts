@@ -482,5 +482,54 @@ describe("hardenToolCalls", () => {
       const textEvents = events.filter((e) => e.type === "text_delta");
       expect(textEvents.length).toBe(0);
     });
+
+    it("emits diagnostic after JSON repair produces collapsed nested args", async () => {
+      const base = createAssistantMessageEventStream();
+      const partial = makePartial();
+      // Driver delivers empty args — repair will succeed but result is collapsed
+      const brokenToolCall: ToolCall = {
+        type: "toolCall",
+        id: "tc1",
+        name: "questionnaire",
+        arguments: {},
+      };
+      partial.content.push(brokenToolCall);
+
+      pushEvents(base, [
+        { type: "start", partial },
+        { type: "toolcall_start", contentIndex: 0, partial },
+        {
+          type: "toolcall_delta",
+          contentIndex: 0,
+          delta: '{"questions":[{}]}',
+          partial,
+        },
+        {
+          type: "toolcall_end",
+          contentIndex: 0,
+          toolCall: brokenToolCall,
+          partial,
+        },
+        { type: "done", reason: "toolUse", message: partial },
+      ]);
+
+      const events = await collectEvents(hardenToolCalls(base));
+
+      // Repair should have succeeded (args are no longer empty)
+      const toolEnd = events.find((e) => e.type === "toolcall_end");
+      expect(toolEnd).toBeDefined();
+      if (toolEnd?.type === "toolcall_end") {
+        expect(toolEnd.toolCall.arguments).toEqual({ questions: [{}] });
+      }
+
+      // Diagnostic text should be emitted for the repaired-but-collapsed args
+      const textDeltas = events
+        .filter((e) => e.type === "text_delta")
+        .map((e) => (e.type === "text_delta" ? e.delta : ""));
+      const fullText = textDeltas.join("");
+      expect(fullText).toContain("questionnaire");
+      expect(fullText).toContain("empty nested arguments");
+      expect(fullText).toContain("Do not retry");
+    });
   });
 });

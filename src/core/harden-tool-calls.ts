@@ -131,7 +131,7 @@ export function hardenToolCalls(
 
             // Emit original, then check for collapsed args
             out.push(ev);
-            if (!isEmptyArgs(toolCall.arguments) && hasCollapsedNestedArgs(toolCall.arguments)) {
+            if (hasCollapsedNestedArgs(toolCall.arguments)) {
               emitDiagnosticText(out, toolCall.name, ev.partial);
             }
 
