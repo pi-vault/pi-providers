@@ -11,6 +11,8 @@ import type {
 import { getApiProvider } from "@earendil-works/pi-ai/compat";
 import type { ExtensionAPI, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 import { cleanStream } from "../core/clean-stream.ts";
+import { hardenToolCalls } from "../core/harden-tool-calls.ts";
+import { normalizeToolResults } from "../core/normalize-tool-results.ts";
 
 export const M3_COMPAT: OpenAICompletionsCompat = {
   supportsStore: false,
@@ -49,12 +51,13 @@ export function makeProvider(
     ): AssistantMessageEventStream {
       const driver = getApiProvider("openai-completions");
       if (!driver) throw new Error("openai-completions api provider not registered");
+      const ctx = normalizeToolResults(context);
       const base = driver.streamSimple(
         { ...model, api: "openai-completions" },
-        context,
+        ctx,
         options,
       );
-      return cleanStream(base);
+      return cleanStream(hardenToolCalls(base));
     },
     models: [M3_MODEL_CONFIG],
   });
