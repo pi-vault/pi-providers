@@ -33,85 +33,19 @@
 
 - Modify: `tests/core/harden-tool-calls.test.ts`
 
-- [ ] **Step 1: Add passthrough tests**
+- [x] **Step 1: Add passthrough tests**
 
-Insert the following three `it(...)` blocks **inside** the existing `describe("event passthrough", () => { ... })` block (after the "stream terminates with done event" test, before the closing `});` of that describe):
+Inserted two `it(...)` blocks inside the existing `describe("event passthrough")` block (after "stream terminates with done event"). Each test verifies the full event type sequence via `events.map(e => e.type)` and the delta content.
 
-```typescript
-it("passes through thinking events unchanged", async () => {
-  const base = createAssistantMessageEventStream();
-  const partial = makePartial();
+Dropped the error passthrough test — already covered by "propagates base stream error events unchanged" in `describe("error handling")`.
 
-  pushEvents(base, [
-    { type: "start", partial },
-    { type: "thinking_start", contentIndex: 0, partial },
-    { type: "thinking_delta", contentIndex: 0, delta: "reasoning", partial },
-    { type: "thinking_end", contentIndex: 0, content: "reasoning", partial },
-    { type: "done", reason: "stop", message: partial },
-  ]);
-
-  const events = await collectEvents(hardenToolCalls(base));
-  const thinkDeltas = events
-    .filter((e) => e.type === "thinking_delta")
-    .map((e) => (e.type === "thinking_delta" ? e.delta : ""));
-  expect(thinkDeltas).toEqual(["reasoning"]);
-});
-
-it("passes through text events unchanged", async () => {
-  const base = createAssistantMessageEventStream();
-  const partial = makePartial();
-
-  pushEvents(base, [
-    { type: "start", partial },
-    { type: "text_start", contentIndex: 0, partial },
-    { type: "text_delta", contentIndex: 0, delta: "hello", partial },
-    { type: "text_end", contentIndex: 0, content: "hello", partial },
-    { type: "done", reason: "stop", message: partial },
-  ]);
-
-  const events = await collectEvents(hardenToolCalls(base));
-  const textDeltas = events
-    .filter((e) => e.type === "text_delta")
-    .map((e) => (e.type === "text_delta" ? e.delta : ""));
-  expect(textDeltas).toEqual(["hello"]);
-});
-
-it("passes through error events unchanged when no repairs active", async () => {
-  const base = createAssistantMessageEventStream();
-  const partial = makePartial();
-
-  pushEvents(base, [
-    { type: "start", partial },
-    {
-      type: "error",
-      reason: "error",
-      error: {
-        ...partial,
-        stopReason: "error",
-        errorMessage: "upstream fail",
-      },
-    },
-  ]);
-
-  const events = await collectEvents(hardenToolCalls(base));
-  const errors = events.filter((e) => e.type === "error");
-  expect(errors.length).toBe(1);
-  if (errors[0].type === "error") {
-    expect(errors[0].error.errorMessage).toBe("upstream fail");
-  }
-});
-```
-
-**Insertion point:** line 215 of the current file (after the closing `});` of "stream terminates with done event" test, before line 216 `});` that closes the describe block).
-
-- [ ] **Step 2: Run tests to verify they pass**
+- [x] **Step 2: Run tests to verify they pass**
 
 Run: `pnpm test -- tests/core/harden-tool-calls.test.ts`
-Expected: PASS (all existing + new tests)
+Result: PASS — 20 tests in file, 63 total
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
-```bash
-git add tests/core/harden-tool-calls.test.ts
-git commit -m "test: add event passthrough tests for hardenToolCalls"
+```
+7f79336 test: add event passthrough tests for hardenToolCalls
 ```
