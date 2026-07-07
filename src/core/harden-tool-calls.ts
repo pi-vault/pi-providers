@@ -140,6 +140,9 @@ export function hardenToolCalls(
           }
 
           case "done": {
+            const { cacheRead, input } = ev.message.usage;
+            if (cacheRead > 0) console.error(`[minimax-openai] cache hit: ${cacheRead} tokens cached`);
+            else if (input > 1000) console.error(`[minimax-openai] cache miss: ${input} input tokens, 0 cached`);
             if (repairs.size === 0) { out.push(ev); break; }
             const content = ev.message.content.map((c, i) => repairs.get(i) ?? c);
             out.push({ ...ev, message: { ...ev.message, content } });
