@@ -100,6 +100,8 @@ describe("normalizeToolResults", () => {
     );
 
     expect(results.map((r) => r.toolCallId)).toEqual(["tc_a", "tc_b"]);
+    // Returns same reference when no changes needed
+    expect(result).toBe(ctx);
   });
 
   it("passes through single tool call turns unchanged", () => {
@@ -141,6 +143,50 @@ describe("normalizeToolResults", () => {
     );
 
     expect(afterOrder).toEqual(originalOrder);
+  });
+
+  it("handles missing tool results gracefully", () => {
+    const assistant = makeAssistant([
+      makeToolCall("tc_a", "read"),
+      makeToolCall("tc_b", "bash"),
+      makeToolCall("tc_c", "grep"),
+    ]);
+
+    const ctx: Context = {
+      messages: [
+        makeUser("do things"),
+        assistant,
+        // tc_b result is missing (aborted)
+        makeToolResult("tc_c", "grep"),
+        makeToolResult("tc_a", "read"),
+      ],
+    };
+
+    const result = normalizeToolResults(ctx);
+    const results = result.messages.filter(
+      (m): m is ToolResultMessage => m.role === "toolResult",
+    );
+
+    // Should reorder to match tool call order, with tc_b missing
+    expect(results.map((r) => r.toolCallId)).toEqual(["tc_a", "tc_c"]);
+  });
+
+  it("passes through orphaned tool results unchanged", () => {
+    const ctx: Context = {
+      messages: [
+        makeUser("some user message"),
+        makeToolResult("tc_a", "read"),
+        makeToolResult("tc_b", "bash"),
+      ],
+    };
+
+    const result = normalizeToolResults(ctx);
+    const results = result.messages.filter(
+      (m): m is ToolResultMessage => m.role === "toolResult",
+    );
+
+    expect(results.map((r) => r.toolCallId)).toEqual(["tc_a", "tc_b"]);
+    expect(result).toBe(ctx);
   });
 
   it("handles multiple assistant-result groups", () => {

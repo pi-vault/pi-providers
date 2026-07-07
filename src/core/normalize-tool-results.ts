@@ -43,25 +43,11 @@ export function normalizeToolResults(context: Context): Context {
     ) as ToolResultMessage[];
     if (results.length < 2) continue;
 
-    // Build the desired order based on tool call IDs
-    const idOrder = toolCalls.map((tc) => tc.id);
-    const resultMap = new Map<string, ToolResultMessage>();
-    for (const r of results) {
-      resultMap.set(r.toolCallId, r);
-    }
-
-    const sorted: ToolResultMessage[] = [];
-    for (const id of idOrder) {
-      const r = resultMap.get(id);
-      if (r) {
-        sorted.push(r);
-        resultMap.delete(id);
-      }
-    }
-    // Append any results not matched to a tool call (shouldn't happen, but be safe)
-    for (const r of resultMap.values()) {
-      sorted.push(r);
-    }
+    // Sort results to match tool call order; unmatched IDs sort to the end
+    const order = new Map(toolCalls.map((tc, idx) => [tc.id, idx]));
+    const sorted = [...results].sort((a, b) =>
+      (order.get(a.toolCallId) ?? Infinity) - (order.get(b.toolCallId) ?? Infinity),
+    );
 
     // Check if order actually changed
     const orderChanged = sorted.some(
