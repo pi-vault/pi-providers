@@ -1,6 +1,6 @@
 // tests/core/harden-tool-calls.test.ts
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type {
   AssistantMessage,
   AssistantMessageEvent,
@@ -531,5 +531,69 @@ describe("hardenToolCalls", () => {
       expect(fullText).toContain("empty nested arguments");
       expect(fullText).toContain("Do not retry");
     });
+  });
+
+  describe("cache verification logging", () => {
+    it("logs cache hit when cacheRead > 0", async () => {
+      const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const base = createAssistantMessageEventStream();
+      const partial = makePartial();
+      partial.usage.cacheRead = 5000;
+      partial.usage.input = 10000;
+
+      pushEvents(base, [
+        { type: "start", partial },
+        { type: "done", reason: "stop", message: partial },
+      ]);
+
+      await collectEvents(hardenToolCalls(base));
+
+      const logCalls = spy.mock.calls.map((c) => c.join(" "));
+      expect(
+        logCalls.some((l) => l.includes("cache hit") && l.includes("5000")),
+      ).toBe(true);
+      spy.mockRestore();
+    });
+
+    it("logs cache miss when cacheRead is 0 and input > 1000", async () => {
+      const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const base = createAssistantMessageEventStream();
+      const partial = makePartial();
+      partial.usage.cacheRead = 0;
+      partial.usage.input = 5000;
+
+      pushEvents(base, [
+        { type: "start", partial },
+        { type: "done", reason: "stop", message: partial },
+      ]);
+
+      await collectEvents(hardenToolCalls(base));
+
+      const logCalls = spy.mock.calls.map((c) => c.join(" "));
+      expect(
+        logCalls.some((l) => l.includes("cache miss") && l.includes("5000")),
+      ).toBe(true);
+      spy.mockRestore();
+    });
+
+    it("does not log cache info for small inputs without cache", async () => {
+      const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const base = createAssistantMessageEventStream();
+      const partial = makePartial();
+      partial.usage.cacheRead = 0;
+      partial.usage.input = 500;
+
+      pushEvents(base, [
+        { type: "start", partial },
+        { type: "done", reason: "stop", message: partial },
+      ]);
+
+      await collectEvents(hardenToolCalls(base));
+
+      const logCalls = spy.mock.calls.map((c) => c.join(" "));
+      expect(logCalls.some((l) => l.includes("cache"))).toBe(false);
+      spy.mockRestore();
+    });
+
   });
 });
