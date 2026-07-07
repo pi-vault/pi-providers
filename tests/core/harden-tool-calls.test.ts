@@ -213,6 +213,42 @@ describe("hardenToolCalls", () => {
       const last = events[events.length - 1];
       expect(last.type).toBe("done");
     });
+
+    it("passes through thinking events unchanged", async () => {
+      const base = createAssistantMessageEventStream();
+      const partial = makePartial();
+
+      pushEvents(base, [
+        { type: "start", partial },
+        { type: "thinking_start", contentIndex: 0, partial },
+        { type: "thinking_delta", contentIndex: 0, delta: "reasoning", partial },
+        { type: "thinking_end", contentIndex: 0, content: "reasoning", partial },
+        { type: "done", reason: "stop", message: partial },
+      ]);
+
+      const events = await collectEvents(hardenToolCalls(base));
+      const types = events.map((e) => e.type);
+      expect(types).toEqual(["start", "thinking_start", "thinking_delta", "thinking_end", "done"]);
+      expect(events[2]).toHaveProperty("delta", "reasoning");
+    });
+
+    it("passes through text events unchanged", async () => {
+      const base = createAssistantMessageEventStream();
+      const partial = makePartial();
+
+      pushEvents(base, [
+        { type: "start", partial },
+        { type: "text_start", contentIndex: 0, partial },
+        { type: "text_delta", contentIndex: 0, delta: "hello", partial },
+        { type: "text_end", contentIndex: 0, content: "hello", partial },
+        { type: "done", reason: "stop", message: partial },
+      ]);
+
+      const events = await collectEvents(hardenToolCalls(base));
+      const types = events.map((e) => e.type);
+      expect(types).toEqual(["start", "text_start", "text_delta", "text_end", "done"]);
+      expect(events[2]).toHaveProperty("delta", "hello");
+    });
   });
 
   describe("error handling", () => {
