@@ -19,6 +19,49 @@ function isEmptyArgs(args: Record<string, unknown>): boolean {
 }
 
 /**
+ * Returns true when any array in the object contains at least one
+ * empty object — a sign that M3 failed to generate nested JSON.
+ */
+function hasCollapsedNestedArgs(args: Record<string, unknown>): boolean {
+  for (const value of Object.values(args)) {
+    if (!Array.isArray(value)) continue;
+    for (const item of value) {
+      if (
+        item !== null &&
+        typeof item === "object" &&
+        !Array.isArray(item) &&
+        Object.keys(item as Record<string, unknown>).length === 0
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function emitDiagnosticText(
+  out: ReturnType<typeof createAssistantMessageEventStream>,
+  toolName: string,
+  partial: AssistantMessage,
+): void {
+  const msg =
+    `\n[Note: Tool "${toolName}" received empty nested arguments -- ` +
+    "this is a known MiniMax-M3 limitation with complex JSON schemas. " +
+    "Do not retry this tool call.]\n";
+
+  console.error(
+    `[minimax-openai] collapsed args detected for tool "${toolName}"`,
+  );
+
+  // contentIndex doesn't matter for downstream since cleanStream
+  // will remap it; use a high value to avoid collisions
+  const idx = 9999;
+  out.push({ type: "text_start", contentIndex: idx, partial });
+  out.push({ type: "text_delta", contentIndex: idx, delta: msg, partial });
+  out.push({ type: "text_end", contentIndex: idx, content: msg, partial });
+}
+
+/**
  * Defensive stream wrapper that accumulates raw tool-call argument deltas
  * and attempts a second-chance JSON parse when the upstream driver produces
  * empty arguments (`{}`).
@@ -61,6 +104,7 @@ export function hardenToolCalls(
           case "toolcall_end": {
             const toolCall = ev.toolCall;
 
+            // Attempt repair if driver produced empty args
             if (isEmptyArgs(toolCall.arguments)) {
               const raw = argDeltas.get(ev.contentIndex);
               if (raw) {
@@ -70,6 +114,12 @@ export function hardenToolCalls(
                     const fixed: ToolCall = { ...toolCall, arguments: repaired };
                     repairs.set(ev.contentIndex, fixed);
                     out.push({ ...ev, toolCall: fixed });
+
+                    // Check repaired args for collapse
+                    if (hasCollapsedNestedArgs(repaired)) {
+                      emitDiagnosticText(out, toolCall.name, ev.partial);
+                    }
+
                     argDeltas.delete(ev.contentIndex);
                     break;
                   }
@@ -79,8 +129,13 @@ export function hardenToolCalls(
               }
             }
 
-            argDeltas.delete(ev.contentIndex);
+            // Emit original, then check for collapsed args
             out.push(ev);
+            if (!isEmptyArgs(toolCall.arguments) && hasCollapsedNestedArgs(toolCall.arguments)) {
+              emitDiagnosticText(out, toolCall.name, ev.partial);
+            }
+
+            argDeltas.delete(ev.contentIndex);
             break;
           }
 
