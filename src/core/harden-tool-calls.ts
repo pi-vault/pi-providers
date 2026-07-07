@@ -85,28 +85,16 @@ export function hardenToolCalls(
           }
 
           case "done": {
-            if (repairs.size > 0) {
-              const content = [...ev.message.content];
-              for (const [idx, fixed] of repairs) {
-                if (idx < content.length) content[idx] = fixed;
-              }
-              out.push({ ...ev, message: { ...ev.message, content } });
-            } else {
-              out.push(ev);
-            }
+            if (repairs.size === 0) { out.push(ev); break; }
+            const content = ev.message.content.map((c, i) => repairs.get(i) ?? c);
+            out.push({ ...ev, message: { ...ev.message, content } });
             break;
           }
 
           case "error": {
-            if (repairs.size > 0) {
-              const content = [...ev.error.content];
-              for (const [idx, fixed] of repairs) {
-                if (idx < content.length) content[idx] = fixed;
-              }
-              out.push({ ...ev, error: { ...ev.error, content } });
-            } else {
-              out.push(ev);
-            }
+            if (repairs.size === 0) { out.push(ev); break; }
+            const content = ev.error.content.map((c, i) => repairs.get(i) ?? c);
+            out.push({ ...ev, error: { ...ev.error, content } });
             break;
           }
 
