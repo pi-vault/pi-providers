@@ -4,7 +4,7 @@
 
 **Goal:** Add cache hit/miss logging to `hardenToolCalls` so users can verify MiniMax-M3's passive caching is working.
 
-**Architecture:** Extends `hardenToolCalls` (created in Phase 4) with a `done` event handler that reads `usage.cacheRead` and logs cache hit/miss statistics via `console.error`. Pure logging, no stream modification.
+**Architecture:** Extends the existing `done` case in `hardenToolCalls` (created in Phase 4) with cache-hit/miss logging that reads `ev.message.usage` and logs via `console.error`. Pure logging — no stream modification beyond what Phase 4 already does (content patching for repairs).
 
 **Tech Stack:** TypeScript, `@earendil-works/pi-ai`, Vitest
 
@@ -12,7 +12,7 @@
 
 **Parent plan:** `docs/superpowers/plans/2026-07-06-m3-tool-hardening.md` (Phase 3)
 
-**Prerequisite:** Phase 4 (JSON Repair) must be complete. `src/core/harden-tool-calls.ts` and `tests/core/harden-tool-calls.test.ts` must exist.
+**Prerequisite:** Phase 5 (Collapsed-Arg Detection) must be complete. `src/core/harden-tool-calls.ts` must contain the `done` case with content-patching logic from Phase 4.
 
 ---
 
@@ -20,8 +20,25 @@
 
 | File | Action | Responsibility |
 |------|--------|----------------|
-| `src/core/harden-tool-calls.ts` | Modify | Add `done` event handler with cache logging |
+| `src/core/harden-tool-calls.ts` | Modify | Add cache logging to existing `done` case |
 | `tests/core/harden-tool-calls.test.ts` | Modify | Add cache logging tests |
+
+---
+
+## Context: Existing `done` case (Phase 4)
+
+The `done` case already handles patching repaired tool call content:
+
+```typescript
+case "done": {
+  if (repairs.size === 0) { out.push(ev); break; }
+  const content = ev.message.content.map((c, i) => repairs.get(i) ?? c);
+  out.push({ ...ev, message: { ...ev.message, content } });
+  break;
+}
+```
+
+Cache logging must be merged INTO this case, not added as a separate case.
 
 ---
 
@@ -33,13 +50,13 @@
 
 - [ ] **Step 1: Add cache logging tests**
 
-First, ensure `vi` is imported at the top of `tests/core/harden-tool-calls.test.ts`:
+First, add `vi` to the vitest import at the top of `tests/core/harden-tool-calls.test.ts`:
 
 ```typescript
 import { describe, expect, it, vi } from "vitest";
 ```
 
-Then append to the `describe("hardenToolCalls")` block:
+Then append a new `describe("cache verification logging")` block inside the top-level `describe("hardenToolCalls")`, after the `"collapsed-arg detection"` block:
 
 ```typescript
   describe("cache verification logging", () => {
@@ -85,7 +102,7 @@ Then append to the `describe("hardenToolCalls")` block:
       spy.mockRestore();
     });
 
-    it("does not log cache miss for small inputs", async () => {
+    it("does not log cache info for small inputs without cache", async () => {
       const spy = vi.spyOn(console, "error").mockImplementation(() => {});
       const base = createAssistantMessageEventStream();
       const partial = makePartial();
@@ -103,17 +120,50 @@ Then append to the `describe("hardenToolCalls")` block:
       expect(logCalls.some((l) => l.includes("cache"))).toBe(false);
       spy.mockRestore();
     });
+
+    it("logs cache info even when repairs exist", async () => {
+      const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const base = createAssistantMessageEventStream();
+      const partial = makePartial();
+      partial.usage.cacheRead = 8000;
+      partial.usage.input = 2000;
+      const brokenToolCall: ToolCall = {
+        type: "toolCall",
+        id: "tc1",
+        name: "edit",
+        arguments: {},
+      };
+      partial.content.push(brokenToolCall);
+
+      const rawArgs = '{"path":"/foo.ts","content":"hello"}';
+
+      pushEvents(base, [
+        { type: "start", partial },
+        { type: "toolcall_start", contentIndex: 0, partial },
+        { type: "toolcall_delta", contentIndex: 0, delta: rawArgs, partial },
+        { type: "toolcall_end", contentIndex: 0, toolCall: brokenToolCall, partial },
+        { type: "done", reason: "toolUse", message: partial },
+      ]);
+
+      await collectEvents(hardenToolCalls(base));
+
+      const logCalls = spy.mock.calls.map((c) => c.join(" "));
+      expect(
+        logCalls.some((l) => l.includes("cache hit") && l.includes("8000")),
+      ).toBe(true);
+      spy.mockRestore();
+    });
   });
 ```
 
 - [ ] **Step 2: Run tests to verify new ones fail**
 
 Run: `pnpm test -- tests/core/harden-tool-calls.test.ts`
-Expected: FAIL on cache logging tests (no `done` handler yet, the `default` case just passes through without logging)
+Expected: FAIL on all 4 cache logging tests (existing `done` case doesn't log anything).
 
-- [ ] **Step 3: Add cache logging to the `done` event handler**
+- [ ] **Step 3: Add cache logging to the existing `done` case**
 
-In `src/core/harden-tool-calls.ts`, add a new case for `"done"` in the switch statement (before the `default` case):
+In `src/core/harden-tool-calls.ts`, replace the existing `done` case (lines 142-147) with:
 
 ```typescript
           case "done": {
@@ -127,15 +177,19 @@ In `src/core/harden-tool-calls.ts`, add a new case for `"done"` in the switch st
                 `[minimax-openai] cache miss: ${usage.input} input tokens, 0 cached`,
               );
             }
-            out.push(ev);
+            if (repairs.size === 0) { out.push(ev); break; }
+            const content = ev.message.content.map((c, i) => repairs.get(i) ?? c);
+            out.push({ ...ev, message: { ...ev.message, content } });
             break;
           }
 ```
 
+Key: cache logging runs FIRST (reads `ev.message.usage` which is unaffected by content patching), then the existing content-patching logic follows.
+
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `pnpm test -- tests/core/harden-tool-calls.test.ts`
-Expected: PASS (all tests including the 3 new cache logging tests)
+Expected: ALL tests pass — new cache logging tests AND existing Phase 4/5 tests.
 
 - [ ] **Step 5: Commit**
 
