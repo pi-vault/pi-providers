@@ -5,11 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] - 2026-07-12
 
 ### Added
 
 - `stepfun-ai` provider for StepFun Step Plan models via the OpenAI-compatible endpoint.
+- `step-3.5-flash` reasoning model (256K context, text input, automatic reasoning shown as high in Pi).
+- `step-3.5-flash-2603` reasoning model (256K context, text input, low/high reasoning effort).
+- `step-3.7-flash` reasoning model (256K context, text + image input, low/medium/high reasoning effort).
+
+### Changed
+
+- MiniMax tool-call hardening pipeline (cleanStream, hardenToolCalls, normalizeToolResults, ThinkScanner) moved from `src/core/` to `src/providers/minimax-openai/` - StepFun uses Pi's native OpenAI-compatible stream without MiniMax-specific hardening.
+- README restructured to a usage-first format with compact model comparison table.
 
 ## [0.1.0] - 2026-07-07
 
