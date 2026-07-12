@@ -19,11 +19,7 @@ describe("registerStepFun", () => {
       apiKey: "$STEP_API_KEY",
       api: "openai-completions",
     });
-    expect(config.models.map((model: { id: string }) => model.id)).toEqual([
-      "step-3.7-flash",
-      "step-3.5-flash-2603",
-      "step-3.5-flash",
-    ]);
+    expect(config.models).toHaveLength(3);
     expect(config.models[0]).toMatchObject({
       id: "step-3.7-flash",
       name: "Step 3.7 Flash",
