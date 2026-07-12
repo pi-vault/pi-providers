@@ -18,7 +18,7 @@ The standalone phase plans below are the execution order for this parent plan. E
 2. [Phase 2: Step 3.5 Flash 2603](2026-07-11-phase-2-stepfun-3-5-flash-2603.md) — low/high reasoning controls and second model.
 3. [Phase 3: Step 3.7 Flash](2026-07-11-phase-3-stepfun-3-7-flash.md) — multimodal model, final catalog docs, changelog, and release checks.
 
-The parent’s full metadata and verification sections remain the scope reference; the phase plans split delivery into independently usable increments.
+The parent’s full metadata and verification sections remain the scope reference; the phase plans split delivery into independently usable increments. The revised Phase 1 plan is authoritative for its private constants, captured-registration tests, and credential-gated live acceptance; the parent examples below describe the eventual three-model catalog.
 
 ---
 
@@ -44,7 +44,7 @@ The parent’s full metadata and verification sections remain the scope referenc
 - `step-3.5-flash-2603` supports `low` and `high` reasoning effort.
 - `step-3.5-flash` performs automatic reasoning; expose only `high` as its available Pi thinking state and do not send `reasoning_effort`.
 - Compatibility disables `store`, developer-role prompts, strict tool schemas, streaming usage request options, and long cache retention; it selects `max_tokens`.
-- Pi already parses `reasoning_content`, so no stream transformation is required.
+- Pi already parses StepFun’s documented `reasoning` and `reasoning_content` fields, so no stream transformation is required.
 
 ### Task 1: Add StepFun Provider Tests
 
@@ -430,9 +430,9 @@ Run: `pnpm release:check`
 
 Expected: the full check passes and the package dry-run includes `src/providers/stepfun-ai.ts`, README, and changelog without adding dependencies.
 
-- [ ] **Step 3: Leave live Pi checkout verification to the user**
+- [ ] **Step 3: Run authenticated live Pi checkout verification when credentials are available**
 
-The implementation plan does not run the user's manual live Pi verification. The user should load the extension in the Pi checkout, confirm the three `stepfun-ai/*` models appear, and exercise text, tool calling, 3.7 image input, and reasoning-level selection with `STEP_API_KEY` configured.
+With an active Step Plan subscription and `STEP_API_KEY` configured, run `pi -e ./src/index.ts --list-models stepfun-ai`, then exercise text, tool calling, `step-3.7-flash` image input, and each documented reasoning level. If credentials are unavailable, record the live check as pending rather than claiming the provider is live-verified.
 
 ## Self-Review
 
