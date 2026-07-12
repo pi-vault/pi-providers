@@ -1,8 +1,8 @@
 {
   "name": "@pi-vault/pi-providers",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
-  "description": "Pi extension that enables custom providers for Pi",
+  "description": "Pi extension that adds MiniMax and StepFun custom model providers",
   "author": "Lanh Hoang <lanhhoang@users.noreply.github.com>",
   "license": "MIT",
   "homepage": "https://github.com/pi-vault/pi-providers#readme",
@@ -19,7 +19,10 @@
     "pi-package",
     "pi-extension",
     "pi-providers",
-    "custom-providers"
+    "custom-providers",
+    "minimax",
+    "stepfun",
+    "openai-compatible"
   ],
   "scripts": {
     "format": "biome format --write .",
