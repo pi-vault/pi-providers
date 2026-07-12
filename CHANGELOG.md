@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `stepfun-ai` provider for StepFun Step Plan models via the OpenAI-compatible endpoint.
-- `step-3.5-flash` reasoning model (256K context, text input, automatic high reasoning).
+- `step-3.5-flash` reasoning model (256K context, text input, automatic reasoning shown as high in Pi).
 - `step-3.5-flash-2603` reasoning model (256K context, text input, low/high reasoning effort).
 - `step-3.7-flash` reasoning model (256K context, text + image input, low/medium/high reasoning effort).
 
