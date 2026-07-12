@@ -1,4 +1,4 @@
-// src/core/harden-tool-calls.ts
+// src/providers/minimax-openai/harden-tool-calls.ts
 
 import type {
   AssistantMessage,

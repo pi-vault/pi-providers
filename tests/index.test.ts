@@ -9,10 +9,11 @@ describe("providers extension", () => {
     createExtension(mockPi);
 
     expect(registerProvider).toHaveBeenCalledTimes(3);
-    const names = registerProvider.mock.calls.map((call: unknown[]) => call[0]);
-    expect(names).toContain("minimax-openai");
-    expect(names).toContain("minimax-openai-cn");
-    expect(names).toContain("stepfun-ai");
+    expect(registerProvider.mock.calls.map((call: unknown[]) => call[0])).toEqual([
+      "minimax-openai",
+      "minimax-openai-cn",
+      "stepfun-ai",
+    ]);
   });
 
   it("minimax-openai uses global endpoint and key", () => {

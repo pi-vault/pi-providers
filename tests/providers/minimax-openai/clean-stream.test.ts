@@ -1,4 +1,4 @@
-// tests/core/clean-stream.test.ts
+// tests/providers/minimax-openai/clean-stream.test.ts
 
 import { describe, expect, it } from "vitest";
 import type {
@@ -10,7 +10,7 @@ import type {
   ToolCall,
 } from "@earendil-works/pi-ai";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
-import { cleanStream } from "../../src/core/clean-stream.ts";
+import { cleanStream } from "../../../src/providers/minimax-openai/clean-stream.ts";
 
 function makePartial(content: AssistantMessage["content"] = []): AssistantMessage {
   return {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ThinkScanner } from "../../src/core/think-scanner.ts";
+import { ThinkScanner } from "../../../src/providers/minimax-openai/think-scanner.ts";
 
 describe("ThinkScanner", () => {
   describe("feed", () => {

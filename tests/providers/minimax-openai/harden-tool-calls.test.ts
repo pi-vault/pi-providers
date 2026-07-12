@@ -1,4 +1,4 @@
-// tests/core/harden-tool-calls.test.ts
+// tests/providers/minimax-openai/harden-tool-calls.test.ts
 
 import { describe, expect, it, vi } from "vitest";
 import type {
@@ -8,7 +8,7 @@ import type {
   ToolCall,
 } from "@earendil-works/pi-ai";
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
-import { hardenToolCalls } from "../../src/core/harden-tool-calls.ts";
+import { hardenToolCalls } from "../../../src/providers/minimax-openai/harden-tool-calls.ts";
 
 function makePartial(
   content: AssistantMessage["content"] = [],
