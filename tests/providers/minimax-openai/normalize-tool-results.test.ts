@@ -1,4 +1,4 @@
-// tests/core/normalize-tool-results.test.ts
+// tests/providers/minimax-openai/normalize-tool-results.test.ts
 
 import { describe, expect, it } from "vitest";
 import type {
@@ -8,7 +8,7 @@ import type {
   ToolResultMessage,
   UserMessage,
 } from "@earendil-works/pi-ai";
-import { normalizeToolResults } from "../../src/core/normalize-tool-results.ts";
+import { normalizeToolResults } from "../../../src/providers/minimax-openai/normalize-tool-results.ts";
 
 function makeAssistant(toolCalls: ToolCall[]): AssistantMessage {
   return {

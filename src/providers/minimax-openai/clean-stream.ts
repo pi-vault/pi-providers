@@ -1,4 +1,4 @@
-// src/core/clean-stream.ts
+// src/providers/minimax-openai/clean-stream.ts
 
 import type {
   AssistantMessage,

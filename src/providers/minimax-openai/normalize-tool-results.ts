@@ -1,4 +1,4 @@
-// src/core/normalize-tool-results.ts
+// src/providers/minimax-openai/normalize-tool-results.ts
 
 import type {
   AssistantMessage,
