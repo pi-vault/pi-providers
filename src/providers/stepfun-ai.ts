@@ -52,12 +52,31 @@ const model2603: ProviderModelConfig = {
   compat: { ...compat, supportsReasoningEffort: true },
 };
 
+const model37: ProviderModelConfig = {
+  id: "step-3.7-flash",
+  name: "Step 3.7 Flash",
+  reasoning: true,
+  thinkingLevelMap: {
+    off: null,
+    minimal: null,
+    low: "low",
+    medium: "medium",
+    high: "high",
+    xhigh: null,
+  },
+  input: ["text", "image"],
+  cost: { input: 0.2, output: 1.15, cacheRead: 0.04, cacheWrite: 0 },
+  contextWindow: 256_000,
+  maxTokens: 256_000,
+  compat: { ...compat, supportsReasoningEffort: true },
+};
+
 export function registerStepFun(pi: ExtensionAPI): void {
   pi.registerProvider("stepfun-ai", {
     name: "StepFun AI",
     baseUrl: "https://api.stepfun.ai/step_plan/v1",
     apiKey: "$STEP_API_KEY",
     api: "openai-completions",
-    models: [model, model2603],
+    models: [model37, model2603, model],
   });
 }
