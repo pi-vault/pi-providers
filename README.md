@@ -11,7 +11,8 @@ Register custom model providers for [Pi](https://github.com/earendil-works/pi-co
 
 - `minimax-openai` provider for MiniMax M3 against the global MiniMax endpoint
 - `minimax-openai-cn` provider variant targeting the MiniMax China endpoint
-- Tool-call hardening pipeline wrapped around every provider stream: stream cleaning, tool-call argument repair, and tool-result ordering
+- `stepfun-ai` provider for StepFun Step 3.5 Flash through the Step Plan endpoint
+- MiniMax tool-call hardening pipeline: stream cleaning, tool-call argument repair, and tool-result ordering
 
 ## Install
 
@@ -37,9 +38,12 @@ export MINIMAX_API_KEY="..."
 
 # China MiniMax endpoint (minimax-openai-cn)
 export MINIMAX_CN_API_KEY="..."
+
+# StepFun Step Plan endpoint (stepfun-ai)
+export STEP_API_KEY="..."
 ```
 
-The provider code passes `"$MINIMAX_API_KEY"` / `"$MINIMAX_CN_API_KEY"` to Pi, so Pi resolves the values from the environment at request time. If a variable is unset the corresponding provider cannot authenticate.
+The provider code passes the corresponding `$MINIMAX_API_KEY`, `$MINIMAX_CN_API_KEY`, or `$STEP_API_KEY` reference to Pi, so Pi resolves the value from the environment at request time. If a variable is unset the corresponding provider cannot authenticate.
 
 ## Usage
 
@@ -47,8 +51,9 @@ Once installed and reloaded, the providers appear in Pi's model picker.
 
 - Select `minimax-openai` (or `minimax-openai-cn`) as the provider.
 - Choose the `MiniMax-M3` model.
+- Select `stepfun-ai` and choose `step-3.5-flash` for StepFun's text reasoning model.
 
-Ask Pi normally — there is no provider-specific prompt syntax. Reasoning and image+text input work out of the box.
+Ask Pi normally — there is no provider-specific prompt syntax. All listed models support reasoning; image input is available only with `MiniMax-M3` in Phase 1.
 
 ### Model facts — `MiniMax-M3`
 
@@ -63,6 +68,19 @@ Ask Pi normally — there is no provider-specific prompt syntax. Reasoning and i
 | Cost (cache write)    | free                                                                       |
 | API base              | `https://api.minimax.io/v1` (global) or `https://api.minimaxi.com/v1` (CN) |
 
+### Model facts — `step-3.5-flash`
+
+| Field                 | Value                                             |
+| --------------------- | ------------------------------------------------- |
+| Context window        | 256,000 tokens                                    |
+| Max output tokens     | 256,000                                           |
+| Input modalities      | text                                              |
+| Reasoning             | automatic (Pi exposes `high`)                     |
+| Cost (input / output) | $0.10 / $0.30 per 1M tokens                       |
+| Cost (cache read)     | $0.02 per 1M tokens                               |
+| Cost (cache write)    | free                                              |
+| API base              | `https://api.stepfun.ai/step_plan/v1`             |
+
 ### Compatibility flags
 
 MiniMax M3 does not support every OpenAI field. Pi uses these flags when talking to it:
@@ -72,9 +90,11 @@ MiniMax M3 does not support every OpenAI field. Pi uses these flags when talking
 - `supportsReasoningEffort: false`
 - `maxTokensField: "max_tokens"`
 
+StepFun Step 3.5 Flash uses Pi's native OpenAI-compatible driver with `max_tokens`, without `reasoning_effort`, streaming usage options, strict tool schemas, developer-role prompts, or long cache retention.
+
 ## Notes and limits
 
-- Both providers reuse Pi's built-in `openai-completions` driver and only override the base URL, API key, and event-stream hardening.
+- All providers reuse Pi's built-in `openai-completions` driver. MiniMax wraps its stream with provider-specific hardening; StepFun uses Pi's native stream handling.
 - The hardening pipeline folds inline `think` blocks emitted in `text` deltas into a proper `thinking` content block, repairs empty `{}` tool-call arguments via a second-chance JSON parse, and reorders tool-result messages to match the order of the preceding `tool_use` blocks — M3 rejects mismatched ordering.
 - Tool-call argument collapse on deeply nested JSON schemas is a known M3 limitation; the package emits a diagnostic message instead of retrying.
 
