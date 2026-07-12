@@ -11,7 +11,7 @@ Register custom model providers for [Pi](https://github.com/earendil-works/pi-co
 
 - `minimax-openai` provider for MiniMax M3 against the global MiniMax endpoint
 - `minimax-openai-cn` provider variant targeting the MiniMax China endpoint
-- `stepfun-ai` provider for StepFun Step 3.5 Flash models through the Step Plan endpoint
+- `stepfun-ai` provider for StepFun Step 3.5 and 3.7 Flash models through the Step Plan endpoint
 - MiniMax tool-call hardening pipeline: stream cleaning, tool-call argument repair, and tool-result ordering
 
 ## Install
@@ -51,9 +51,9 @@ Once installed and reloaded, the providers appear in Pi's model picker.
 
 - Select `minimax-openai` (or `minimax-openai-cn`) as the provider.
 - Choose the `MiniMax-M3` model.
-- Select `stepfun-ai` and choose `step-3.5-flash` or `step-3.5-flash-2603` for StepFun's text reasoning models.
+- Select `stepfun-ai` and choose `step-3.7-flash`, `step-3.5-flash-2603`, or `step-3.5-flash` for StepFun reasoning models.
 
-Ask Pi normally — there is no provider-specific prompt syntax. All listed models support reasoning; image input is available only with `MiniMax-M3` in Phase 1.
+Ask Pi normally — there is no provider-specific prompt syntax. All listed models support reasoning; image input is available with `MiniMax-M3` and `step-3.7-flash`.
 
 ### Model facts — `MiniMax-M3`
 
@@ -67,6 +67,19 @@ Ask Pi normally — there is no provider-specific prompt syntax. All listed mode
 | Cost (cache read)     | $0.12 per 1M tokens                                                        |
 | Cost (cache write)    | free                                                                       |
 | API base              | `https://api.minimax.io/v1` (global) or `https://api.minimaxi.com/v1` (CN) |
+
+### Model facts — `step-3.7-flash`
+
+| Field                 | Value                                             |
+| --------------------- | ------------------------------------------------- |
+| Context window        | 256,000 tokens                                    |
+| Max output tokens     | 256,000                                           |
+| Input modalities      | text, image                                       |
+| Reasoning             | `low`, `medium`, `high`                           |
+| Cost (input / output) | $0.20 / $1.15 per 1M tokens                       |
+| Cost (cache read)     | $0.04 per 1M tokens                               |
+| Cost (cache write)    | free                                              |
+| API base              | `https://api.stepfun.ai/step_plan/v1`             |
 
 ### Model facts — `step-3.5-flash`
 
@@ -103,7 +116,7 @@ MiniMax M3 does not support every OpenAI field. Pi uses these flags when talking
 - `supportsReasoningEffort: false`
 - `maxTokensField: "max_tokens"`
 
-StepFun Step 3.5 Flash uses Pi's native OpenAI-compatible driver with `max_tokens`, without `reasoning_effort`, streaming usage options, strict tool schemas, developer-role prompts, or long cache retention. Step 3.5 Flash 2603 additionally sends the documented `low` or `high` `reasoning_effort` selection.
+StepFun Step 3.5 Flash uses Pi's native OpenAI-compatible driver with `max_tokens`, without `reasoning_effort`, streaming usage options, strict tool schemas, developer-role prompts, or long cache retention. Step 3.5 Flash 2603 sends the documented `low` or `high` `reasoning_effort` selection; Step 3.7 Flash sends `low`, `medium`, or `high`.
 
 ## Notes and limits
 
