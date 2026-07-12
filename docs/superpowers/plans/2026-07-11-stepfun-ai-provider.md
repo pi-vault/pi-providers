@@ -16,7 +16,7 @@ The standalone phase plans below are the execution order for this parent plan. E
 
 1. [Phase 1: Step 3.5 Flash baseline](2026-07-11-phase-1-stepfun-3-5-flash.md) — native registration, automatic reasoning, extension wiring, and initial docs.
 2. [Phase 2: Step 3.5 Flash 2603](2026-07-11-phase-2-stepfun-3-5-flash-2603.md) — low/high reasoning controls and second model.
-3. [Phase 3: Step 3.7 Flash](2026-07-11-phase-3-stepfun-3-7-flash.md) — multimodal model, final catalog docs, changelog, and release checks.
+3. [Phase 3: Step 3.7 Flash](2026-07-11-phase-3-stepfun-3-7-flash.md) — multimodal model, final catalog docs, changelog, and automated release checks; authenticated Step Plan smoke testing is reported separately when credentials are available.
 
 The parent’s full metadata and verification sections remain the scope reference; the phase plans split delivery into independently usable increments. The revised Phase 1 plan is authoritative for its private constants, captured-registration tests, and credential-gated live acceptance; the parent examples below describe the eventual three-model catalog.
 
