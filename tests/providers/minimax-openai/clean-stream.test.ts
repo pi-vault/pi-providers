@@ -1,6 +1,6 @@
 // tests/providers/minimax-openai/clean-stream.test.ts
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type {
   AssistantMessage,
   AssistantMessageEvent,
@@ -9,8 +9,14 @@ import type {
   ThinkingContent,
   ToolCall,
 } from "@earendil-works/pi-ai";
-import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
+import {
+  createAssistantMessageEventStream,
+  isRetryableAssistantError,
+} from "@earendil-works/pi-ai";
 import { cleanStream } from "../../../src/providers/minimax-openai/clean-stream.ts";
+
+const leakedSentinel = "]<]minimax[>[<";
+const postMarkerSecret = "secret-after-marker";
 
 function makePartial(content: AssistantMessage["content"] = []): AssistantMessage {
   return {
@@ -399,6 +405,184 @@ describe("cleanStream", () => {
         );
         expect(texts.length).toBe(1);
         expect(texts[0].text).toBe("result");
+      }
+    });
+  });
+
+  describe("leaked tool-call markup", () => {
+    it("emits a retryable error and stops the stream when the sentinel is complete", async () => {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const base = createAssistantMessageEventStream();
+        const partial = makePartial();
+        partial.content.push({ type: "text", text: "" } as TextContent);
+
+        const leaked =
+          "Preparing the edit. " +
+          leakedSentinel +
+          '<invoke name="write">' +
+          leakedSentinel +
+          "<path>src/file.ts</path>" +
+          leakedSentinel +
+          "</invoke>" +
+          postMarkerSecret;
+
+        pushEvents(base, [
+          { type: "start", partial },
+          { type: "text_start", contentIndex: 0, partial },
+          { type: "text_delta", contentIndex: 0, delta: leaked, partial },
+          { type: "text_end", contentIndex: 0, content: leaked, partial },
+          { type: "done", reason: "stop", message: partial },
+        ]);
+
+        const events = await collectEvents(cleanStream(base));
+
+        const types = events.map((e) => e.type);
+        expect(types).toEqual([
+          "start",
+          "text_start",
+          "text_delta",
+          "text_end",
+          "error",
+        ]);
+        expect(events.some((e) => e.type === "done")).toBe(false);
+
+        const textDeltas = events
+          .filter((e) => e.type === "text_delta")
+          .map((e) => (e.type === "text_delta" ? e.delta : ""))
+          .join("");
+        expect(textDeltas).toBe("Preparing the edit. ");
+
+        const error = events.find((e) => e.type === "error");
+        expect(error).toBeDefined();
+        if (error?.type === "error") {
+          const serialized = JSON.stringify(error.error);
+          expect(serialized.includes(leakedSentinel)).toBe(false);
+          expect(serialized.includes(postMarkerSecret)).toBe(false);
+          expect(error.error.errorMessage).toBe(
+            "MiniMax returned malformed tool-call markup. Please retry your request.",
+          );
+          expect(isRetryableAssistantError(error.error)).toBe(true);
+        }
+
+        expect(errorSpy).toHaveBeenCalledTimes(1);
+        expect(errorSpy).toHaveBeenCalledWith(
+          "[minimax-openai] leaked tool-call markup detected",
+        );
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+
+    it("detects the sentinel split across text_delta boundaries", async () => {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const safePrefix = "safe<thi";
+        for (let split = 1; split < leakedSentinel.length; split++) {
+          const base = createAssistantMessageEventStream();
+          const partial = makePartial();
+          partial.content.push({ type: "text", text: "" } as TextContent);
+
+          const first = safePrefix + leakedSentinel.slice(0, split);
+          const second =
+            leakedSentinel.slice(split) + "<invoke>" + postMarkerSecret;
+
+          pushEvents(base, [
+            { type: "start", partial },
+            { type: "text_start", contentIndex: 0, partial },
+            { type: "text_delta", contentIndex: 0, delta: first, partial },
+            { type: "text_delta", contentIndex: 0, delta: second, partial },
+            { type: "text_end", contentIndex: 0, content: first + second, partial },
+            { type: "done", reason: "stop", message: partial },
+          ]);
+
+          const events = await collectEvents(cleanStream(base));
+
+          const dones = events.filter((e) => e.type === "done");
+          const errors = events.filter((e) => e.type === "error");
+          expect(dones.length, `split=${split}`).toBe(0);
+          expect(errors.length, `split=${split}`).toBe(1);
+
+          const emittedText = events
+            .filter((e) => e.type === "text_delta" || e.type === "text_end")
+            .map((e) => {
+              if (e.type === "text_delta") return e.delta;
+              if (e.type === "text_end") return e.content;
+              return "";
+            })
+            .join("");
+          expect(emittedText.includes(safePrefix), `split=${split}`).toBe(true);
+          expect(
+            emittedText.includes(leakedSentinel),
+            `split=${split}`,
+          ).toBe(false);
+          expect(
+            emittedText.includes(postMarkerSecret),
+            `split=${split}`,
+          ).toBe(false);
+        }
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+
+    it("passes incomplete sentinel prefixes through unchanged", async () => {
+      const base = createAssistantMessageEventStream();
+      const partial = makePartial();
+      partial.content.push({ type: "text", text: "" } as TextContent);
+
+      pushEvents(base, [
+        { type: "start", partial },
+        { type: "text_start", contentIndex: 0, partial },
+        { type: "text_delta", contentIndex: 0, delta: "Hello world]<]mini", partial },
+        { type: "text_end", contentIndex: 0, content: "Hello world]<]mini", partial },
+        { type: "done", reason: "stop", message: partial },
+      ]);
+
+      const events = await collectEvents(cleanStream(base));
+
+      const textDeltas = events
+        .filter((e) => e.type === "text_delta")
+        .map((e) => (e.type === "text_delta" ? e.delta : ""))
+        .join("");
+      expect(textDeltas).toContain("]<]mini");
+
+      const last = events[events.length - 1];
+      expect(last?.type).toBe("done");
+      expect(events.some((e) => e.type === "error")).toBe(false);
+    });
+
+    it("catches the sentinel before ThinkScanner can re-route it", async () => {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const base = createAssistantMessageEventStream();
+        const partial = makePartial();
+        partial.content.push({ type: "text", text: "" } as TextContent);
+
+        const dangerous =
+          "<think>reasoning" +
+          leakedSentinel +
+          '<invoke name="x">' +
+          postMarkerSecret;
+
+        pushEvents(base, [
+          { type: "start", partial },
+          { type: "text_start", contentIndex: 0, partial },
+          { type: "text_delta", contentIndex: 0, delta: dangerous, partial },
+          { type: "text_end", contentIndex: 0, content: dangerous, partial },
+          { type: "done", reason: "stop", message: partial },
+        ]);
+
+        const events = await collectEvents(cleanStream(base));
+
+        expect(events.some((e) => e.type === "done")).toBe(false);
+        expect(events.some((e) => e.type === "error")).toBe(true);
+
+        const serialized = JSON.stringify(events);
+        expect(serialized.includes(leakedSentinel)).toBe(false);
+        expect(serialized.includes(postMarkerSecret)).toBe(false);
+      } finally {
+        errorSpy.mockRestore();
       }
     });
   });
