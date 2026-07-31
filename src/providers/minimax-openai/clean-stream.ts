@@ -53,12 +53,6 @@ function scanLeakedToolMarkup(
   return { text: combined.slice(0, combined.length - keep), leaked: false };
 }
 
-function flushLeakedToolMarkup(state: TextState): string {
-  const buffered = state.leakedToolMarkupBuffer;
-  state.leakedToolMarkupBuffer = "";
-  return buffered;
-}
-
 export function cleanStream(base: AssistantMessageEventStream): AssistantMessageEventStream {
   const out = createAssistantMessageEventStream();
 
@@ -242,7 +236,8 @@ export function cleanStream(base: AssistantMessageEventStream): AssistantMessage
             syncMeta(ev.partial);
             const state = textStates.get(ev.contentIndex);
             if (!state) break;
-            const trailing = flushLeakedToolMarkup(state);
+            const trailing = state.leakedToolMarkupBuffer;
+            state.leakedToolMarkupBuffer = "";
             if (trailing) routeSafeText(state, trailing);
             flushScanner(state);
             closeText(state);

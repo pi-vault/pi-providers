@@ -1,6 +1,6 @@
 // tests/providers/minimax-openai/clean-stream.test.ts
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   AssistantMessage,
   AssistantMessageEvent,
@@ -55,6 +55,34 @@ function pushEvents(
   for (const ev of events) {
     stream.push(ev);
   }
+}
+
+async function cleanTextDeltas(...deltas: string[]): Promise<AssistantMessageEvent[]> {
+  const base = createAssistantMessageEventStream();
+  const partial = makePartial([{ type: "text", text: "" } as TextContent]);
+  const content = deltas.join("");
+
+  pushEvents(base, [
+    { type: "start", partial },
+    { type: "text_start", contentIndex: 0, partial },
+    ...deltas.map<AssistantMessageEvent>((delta) => ({
+      type: "text_delta",
+      contentIndex: 0,
+      delta,
+      partial,
+    })),
+    { type: "text_end", contentIndex: 0, content, partial },
+    { type: "done", reason: "stop", message: partial },
+  ]);
+
+  return collectEvents(cleanStream(base));
+}
+
+function joinedTextDeltas(events: AssistantMessageEvent[]): string {
+  return events
+    .filter((event) => event.type === "text_delta")
+    .map((event) => event.delta)
+    .join("");
 }
 
 describe("cleanStream", () => {
@@ -410,180 +438,86 @@ describe("cleanStream", () => {
   });
 
   describe("leaked tool-call markup", () => {
+    afterEach(() => vi.restoreAllMocks());
+
     it("emits a retryable error and stops the stream when the sentinel is complete", async () => {
       const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-      try {
-        const base = createAssistantMessageEventStream();
-        const partial = makePartial();
-        partial.content.push({ type: "text", text: "" } as TextContent);
+      const leaked =
+        `Preparing the edit. ${leakedSentinel}` +
+        `<invoke name="write">${leakedSentinel}` +
+        `<path>src/file.ts</path>${leakedSentinel}` +
+        `</invoke>${postMarkerSecret}`;
 
-        const leaked =
-          "Preparing the edit. " +
-          leakedSentinel +
-          '<invoke name="write">' +
-          leakedSentinel +
-          "<path>src/file.ts</path>" +
-          leakedSentinel +
-          "</invoke>" +
-          postMarkerSecret;
+      const events = await cleanTextDeltas(leaked);
 
-        pushEvents(base, [
-          { type: "start", partial },
-          { type: "text_start", contentIndex: 0, partial },
-          { type: "text_delta", contentIndex: 0, delta: leaked, partial },
-          { type: "text_end", contentIndex: 0, content: leaked, partial },
-          { type: "done", reason: "stop", message: partial },
-        ]);
+      expect(events.map((event) => event.type)).toEqual([
+        "start",
+        "text_start",
+        "text_delta",
+        "text_end",
+        "error",
+      ]);
+      expect(events.some((event) => event.type === "done")).toBe(false);
+      expect(joinedTextDeltas(events)).toBe("Preparing the edit. ");
 
-        const events = await collectEvents(cleanStream(base));
-
-        const types = events.map((e) => e.type);
-        expect(types).toEqual([
-          "start",
-          "text_start",
-          "text_delta",
-          "text_end",
-          "error",
-        ]);
-        expect(events.some((e) => e.type === "done")).toBe(false);
-
-        const textDeltas = events
-          .filter((e) => e.type === "text_delta")
-          .map((e) => (e.type === "text_delta" ? e.delta : ""))
-          .join("");
-        expect(textDeltas).toBe("Preparing the edit. ");
-
-        const error = events.find((e) => e.type === "error");
-        expect(error).toBeDefined();
-        if (error?.type === "error") {
-          const serialized = JSON.stringify(error.error);
-          expect(serialized.includes(leakedSentinel)).toBe(false);
-          expect(serialized.includes(postMarkerSecret)).toBe(false);
-          expect(error.error.errorMessage).toBe(
-            "MiniMax returned malformed tool-call markup. Please retry your request.",
-          );
-          expect(isRetryableAssistantError(error.error)).toBe(true);
-        }
-
-        expect(errorSpy).toHaveBeenCalledTimes(1);
-        expect(errorSpy).toHaveBeenCalledWith(
-          "[minimax-openai] leaked tool-call markup detected",
+      const error = events.find((event) => event.type === "error");
+      expect(error).toBeDefined();
+      if (error?.type === "error") {
+        const serialized = JSON.stringify(error.error);
+        expect(serialized.includes(leakedSentinel)).toBe(false);
+        expect(serialized.includes(postMarkerSecret)).toBe(false);
+        expect(error.error.errorMessage).toBe(
+          "MiniMax returned malformed tool-call markup. Please retry your request.",
         );
-      } finally {
-        errorSpy.mockRestore();
+        expect(isRetryableAssistantError(error.error)).toBe(true);
       }
+
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+      expect(errorSpy).toHaveBeenCalledWith("[minimax-openai] leaked tool-call markup detected");
     });
 
     it("detects the sentinel split across text_delta boundaries", async () => {
-      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-      try {
-        const safePrefix = "safe<thi";
-        for (let split = 1; split < leakedSentinel.length; split++) {
-          const base = createAssistantMessageEventStream();
-          const partial = makePartial();
-          partial.content.push({ type: "text", text: "" } as TextContent);
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const safePrefix = "safe<thi";
 
-          const first = safePrefix + leakedSentinel.slice(0, split);
-          const second =
-            leakedSentinel.slice(split) + "<invoke>" + postMarkerSecret;
+      for (let split = 1; split < leakedSentinel.length; split++) {
+        const first = safePrefix + leakedSentinel.slice(0, split);
+        const second = `${leakedSentinel.slice(split)}<invoke>${postMarkerSecret}`;
+        const events = await cleanTextDeltas(first, second);
 
-          pushEvents(base, [
-            { type: "start", partial },
-            { type: "text_start", contentIndex: 0, partial },
-            { type: "text_delta", contentIndex: 0, delta: first, partial },
-            { type: "text_delta", contentIndex: 0, delta: second, partial },
-            { type: "text_end", contentIndex: 0, content: first + second, partial },
-            { type: "done", reason: "stop", message: partial },
-          ]);
-
-          const events = await collectEvents(cleanStream(base));
-
-          const dones = events.filter((e) => e.type === "done");
-          const errors = events.filter((e) => e.type === "error");
-          expect(dones.length, `split=${split}`).toBe(0);
-          expect(errors.length, `split=${split}`).toBe(1);
-
-          const emittedText = events
-            .filter((e) => e.type === "text_delta" || e.type === "text_end")
-            .map((e) => {
-              if (e.type === "text_delta") return e.delta;
-              if (e.type === "text_end") return e.content;
-              return "";
-            })
-            .join("");
-          expect(emittedText.includes(safePrefix), `split=${split}`).toBe(true);
-          expect(
-            emittedText.includes(leakedSentinel),
-            `split=${split}`,
-          ).toBe(false);
-          expect(
-            emittedText.includes(postMarkerSecret),
-            `split=${split}`,
-          ).toBe(false);
-        }
-      } finally {
-        errorSpy.mockRestore();
+        expect(
+          events.some((event) => event.type === "done"),
+          `split=${split}`,
+        ).toBe(false);
+        expect(
+          events.filter((event) => event.type === "error"),
+          `split=${split}`,
+        ).toHaveLength(1);
+        expect(joinedTextDeltas(events), `split=${split}`).toBe(safePrefix);
       }
     });
 
     it("passes incomplete sentinel prefixes through unchanged", async () => {
-      const base = createAssistantMessageEventStream();
-      const partial = makePartial();
-      partial.content.push({ type: "text", text: "" } as TextContent);
+      const events = await cleanTextDeltas("Hello world]<]mini");
 
-      pushEvents(base, [
-        { type: "start", partial },
-        { type: "text_start", contentIndex: 0, partial },
-        { type: "text_delta", contentIndex: 0, delta: "Hello world]<]mini", partial },
-        { type: "text_end", contentIndex: 0, content: "Hello world]<]mini", partial },
-        { type: "done", reason: "stop", message: partial },
-      ]);
-
-      const events = await collectEvents(cleanStream(base));
-
-      const textDeltas = events
-        .filter((e) => e.type === "text_delta")
-        .map((e) => (e.type === "text_delta" ? e.delta : ""))
-        .join("");
-      expect(textDeltas).toContain("]<]mini");
-
-      const last = events[events.length - 1];
-      expect(last?.type).toBe("done");
-      expect(events.some((e) => e.type === "error")).toBe(false);
+      expect(joinedTextDeltas(events)).toBe("Hello world]<]mini");
+      expect(events.at(-1)?.type).toBe("done");
+      expect(events.some((event) => event.type === "error")).toBe(false);
     });
 
     it("catches the sentinel before ThinkScanner can re-route it", async () => {
-      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-      try {
-        const base = createAssistantMessageEventStream();
-        const partial = makePartial();
-        partial.content.push({ type: "text", text: "" } as TextContent);
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const dangerous =
+        `<think>reasoning${leakedSentinel}` + `<invoke name="x">${postMarkerSecret}`;
 
-        const dangerous =
-          "<think>reasoning" +
-          leakedSentinel +
-          '<invoke name="x">' +
-          postMarkerSecret;
+      const events = await cleanTextDeltas(dangerous);
 
-        pushEvents(base, [
-          { type: "start", partial },
-          { type: "text_start", contentIndex: 0, partial },
-          { type: "text_delta", contentIndex: 0, delta: dangerous, partial },
-          { type: "text_end", contentIndex: 0, content: dangerous, partial },
-          { type: "done", reason: "stop", message: partial },
-        ]);
+      expect(events.some((event) => event.type === "done")).toBe(false);
+      expect(events.some((event) => event.type === "error")).toBe(true);
 
-        const events = await collectEvents(cleanStream(base));
-
-        expect(events.some((e) => e.type === "done")).toBe(false);
-        expect(events.some((e) => e.type === "error")).toBe(true);
-
-        const serialized = JSON.stringify(events);
-        expect(serialized.includes(leakedSentinel)).toBe(false);
-        expect(serialized.includes(postMarkerSecret)).toBe(false);
-      } finally {
-        errorSpy.mockRestore();
-      }
+      const serialized = JSON.stringify(events);
+      expect(serialized.includes(leakedSentinel)).toBe(false);
+      expect(serialized.includes(postMarkerSecret)).toBe(false);
     });
   });
 });
