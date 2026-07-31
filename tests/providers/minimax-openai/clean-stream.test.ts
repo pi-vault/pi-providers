@@ -1,6 +1,6 @@
 // tests/providers/minimax-openai/clean-stream.test.ts
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
   AssistantMessage,
   AssistantMessageEvent,
@@ -9,8 +9,14 @@ import type {
   ThinkingContent,
   ToolCall,
 } from "@earendil-works/pi-ai";
-import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
+import {
+  createAssistantMessageEventStream,
+  isRetryableAssistantError,
+} from "@earendil-works/pi-ai";
 import { cleanStream } from "../../../src/providers/minimax-openai/clean-stream.ts";
+
+const leakedSentinel = "]<]minimax[>[<";
+const postMarkerSecret = "secret-after-marker";
 
 function makePartial(content: AssistantMessage["content"] = []): AssistantMessage {
   return {
@@ -49,6 +55,34 @@ function pushEvents(
   for (const ev of events) {
     stream.push(ev);
   }
+}
+
+async function cleanTextDeltas(...deltas: string[]): Promise<AssistantMessageEvent[]> {
+  const base = createAssistantMessageEventStream();
+  const partial = makePartial([{ type: "text", text: "" } as TextContent]);
+  const content = deltas.join("");
+
+  pushEvents(base, [
+    { type: "start", partial },
+    { type: "text_start", contentIndex: 0, partial },
+    ...deltas.map<AssistantMessageEvent>((delta) => ({
+      type: "text_delta",
+      contentIndex: 0,
+      delta,
+      partial,
+    })),
+    { type: "text_end", contentIndex: 0, content, partial },
+    { type: "done", reason: "stop", message: partial },
+  ]);
+
+  return collectEvents(cleanStream(base));
+}
+
+function joinedTextDeltas(events: AssistantMessageEvent[]): string {
+  return events
+    .filter((event) => event.type === "text_delta")
+    .map((event) => event.delta)
+    .join("");
 }
 
 describe("cleanStream", () => {
@@ -400,6 +434,90 @@ describe("cleanStream", () => {
         expect(texts.length).toBe(1);
         expect(texts[0].text).toBe("result");
       }
+    });
+  });
+
+  describe("leaked tool-call markup", () => {
+    afterEach(() => vi.restoreAllMocks());
+
+    it("emits a retryable error and stops the stream when the sentinel is complete", async () => {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const leaked =
+        `Preparing the edit. ${leakedSentinel}` +
+        `<invoke name="write">${leakedSentinel}` +
+        `<path>src/file.ts</path>${leakedSentinel}` +
+        `</invoke>${postMarkerSecret}`;
+
+      const events = await cleanTextDeltas(leaked);
+
+      expect(events.map((event) => event.type)).toEqual([
+        "start",
+        "text_start",
+        "text_delta",
+        "text_end",
+        "error",
+      ]);
+      expect(events.some((event) => event.type === "done")).toBe(false);
+      expect(joinedTextDeltas(events)).toBe("Preparing the edit. ");
+
+      const error = events.find((event) => event.type === "error");
+      expect(error).toBeDefined();
+      if (error?.type === "error") {
+        const serialized = JSON.stringify(error.error);
+        expect(serialized.includes(leakedSentinel)).toBe(false);
+        expect(serialized.includes(postMarkerSecret)).toBe(false);
+        expect(error.error.errorMessage).toBe(
+          "MiniMax returned malformed tool-call markup. Please retry your request.",
+        );
+        expect(isRetryableAssistantError(error.error)).toBe(true);
+      }
+
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+      expect(errorSpy).toHaveBeenCalledWith("[minimax-openai] leaked tool-call markup detected");
+    });
+
+    it("detects the sentinel split across text_delta boundaries", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const safePrefix = "safe<thi";
+
+      for (let split = 1; split < leakedSentinel.length; split++) {
+        const first = safePrefix + leakedSentinel.slice(0, split);
+        const second = `${leakedSentinel.slice(split)}<invoke>${postMarkerSecret}`;
+        const events = await cleanTextDeltas(first, second);
+
+        expect(
+          events.some((event) => event.type === "done"),
+          `split=${split}`,
+        ).toBe(false);
+        expect(
+          events.filter((event) => event.type === "error"),
+          `split=${split}`,
+        ).toHaveLength(1);
+        expect(joinedTextDeltas(events), `split=${split}`).toBe(safePrefix);
+      }
+    });
+
+    it("passes incomplete sentinel prefixes through unchanged", async () => {
+      const events = await cleanTextDeltas("Hello world]<]mini");
+
+      expect(joinedTextDeltas(events)).toBe("Hello world]<]mini");
+      expect(events.at(-1)?.type).toBe("done");
+      expect(events.some((event) => event.type === "error")).toBe(false);
+    });
+
+    it("catches the sentinel before ThinkScanner can re-route it", async () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const dangerous =
+        `<think>reasoning${leakedSentinel}` + `<invoke name="x">${postMarkerSecret}`;
+
+      const events = await cleanTextDeltas(dangerous);
+
+      expect(events.some((event) => event.type === "done")).toBe(false);
+      expect(events.some((event) => event.type === "error")).toBe(true);
+
+      const serialized = JSON.stringify(events);
+      expect(serialized.includes(leakedSentinel)).toBe(false);
+      expect(serialized.includes(postMarkerSecret)).toBe(false);
     });
   });
 });

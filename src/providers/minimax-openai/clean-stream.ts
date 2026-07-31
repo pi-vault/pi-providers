@@ -10,11 +10,16 @@ import type {
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { ThinkScanner } from "./think-scanner.ts";
 
+const LEAKED_TOOL_MARKUP_SENTINEL = "]<]minimax[>[<";
+const LEAKED_TOOL_MARKUP_ERROR =
+  "MiniMax returned malformed tool-call markup. Please retry your request.";
+
 interface TextState {
   scanner: ThinkScanner;
   started: boolean;
   index: number;
   block: TextContent;
+  leakedToolMarkupBuffer: string;
 }
 
 interface ThinkingSegment {
@@ -23,6 +28,29 @@ interface ThinkingSegment {
   open: boolean;
   text: string;
   signature?: string;
+}
+
+function scanLeakedToolMarkup(
+  state: TextState,
+  chunk: string,
+): { text: string; leaked: boolean } {
+  const combined = state.leakedToolMarkupBuffer + chunk;
+  const index = combined.indexOf(LEAKED_TOOL_MARKUP_SENTINEL);
+  if (index >= 0) {
+    state.leakedToolMarkupBuffer = "";
+    return { text: combined.slice(0, index), leaked: true };
+  }
+
+  let keep = 0;
+  const max = Math.min(LEAKED_TOOL_MARKUP_SENTINEL.length - 1, combined.length);
+  for (let size = max; size > 0; size--) {
+    if (combined.endsWith(LEAKED_TOOL_MARKUP_SENTINEL.slice(0, size))) {
+      keep = size;
+      break;
+    }
+  }
+  state.leakedToolMarkupBuffer = combined.slice(combined.length - keep);
+  return { text: combined.slice(0, combined.length - keep), leaked: false };
 }
 
 export function cleanStream(base: AssistantMessageEventStream): AssistantMessageEventStream {
@@ -116,6 +144,29 @@ export function cleanStream(base: AssistantMessageEventStream): AssistantMessage
       out.push({ type: "text_delta", contentIndex: state.index, delta: text, partial: output });
     };
 
+    const routeSafeText = (state: TextState, raw: string) => {
+      const { text, think } = state.scanner.feed(raw);
+      pushInlineThinking(think);
+      pushText(state, text);
+    };
+
+    const flushScanner = (state: TextState) => {
+      const tail = state.scanner.flush();
+      pushInlineThinking(tail.think);
+      pushText(state, tail.text);
+    };
+
+    const closeText = (state: TextState) => {
+      if (!state.started || !output) return;
+      state.block.text = state.block.text.trimEnd();
+      out.push({
+        type: "text_end",
+        contentIndex: state.index,
+        content: state.block.text,
+        partial: output,
+      });
+    };
+
     try {
       for await (const ev of base) {
         switch (ev.type) {
@@ -152,6 +203,7 @@ export function cleanStream(base: AssistantMessageEventStream): AssistantMessage
               started: false,
               index: -1,
               block: { type: "text", text: "" },
+              leakedToolMarkupBuffer: "",
             });
             break;
           }
@@ -159,27 +211,36 @@ export function cleanStream(base: AssistantMessageEventStream): AssistantMessage
             syncMeta(ev.partial);
             const state = textStates.get(ev.contentIndex);
             if (!state) break;
-            const { text, think } = state.scanner.feed(ev.delta);
-            pushInlineThinking(think);
-            pushText(state, text);
+            const scanned = scanLeakedToolMarkup(state, ev.delta);
+            routeSafeText(state, scanned.text);
+            if (scanned.leaked) {
+              flushScanner(state);
+              closeText(state);
+              closeSegment();
+              console.error("[minimax-openai] leaked tool-call markup detected");
+              if (!output) return;
+              out.push({
+                type: "error",
+                reason: "error",
+                error: {
+                  ...output,
+                  stopReason: "error",
+                  errorMessage: LEAKED_TOOL_MARKUP_ERROR,
+                },
+              });
+              return;
+            }
             break;
           }
           case "text_end": {
             syncMeta(ev.partial);
             const state = textStates.get(ev.contentIndex);
             if (!state) break;
-            const tail = state.scanner.flush();
-            pushInlineThinking(tail.think);
-            pushText(state, tail.text);
-            if (state.started) {
-              state.block.text = state.block.text.trimEnd();
-              out.push({
-                type: "text_end",
-                contentIndex: state.index,
-                content: state.block.text,
-                partial: output!,
-              });
-            }
+            const trailing = state.leakedToolMarkupBuffer;
+            state.leakedToolMarkupBuffer = "";
+            if (trailing) routeSafeText(state, trailing);
+            flushScanner(state);
+            closeText(state);
             break;
           }
           case "toolcall_start": {
