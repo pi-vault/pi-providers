@@ -26,12 +26,13 @@
   ],
   "scripts": {
     "format": "biome format --write .",
+    "format:check": "biome format .",
     "lint": "biome lint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "check": "biome lint . && tsc --noEmit && vitest run",
     "pack:dry-run": "pnpm pack --dry-run",
-    "release:check": "pnpm check && pnpm run pack:dry-run"
+    "pack:verify": "node scripts/verify-pack.mjs",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm pack:verify"
   },
   "pi": {
     "extensions": [
