@@ -1,8 +1,5 @@
 import type { OpenAICompletionsCompat } from "@earendil-works/pi-ai";
-import type {
-  ExtensionAPI,
-  ProviderModelConfig,
-} from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 
 const compat: OpenAICompletionsCompat = {
   supportsStore: false,
@@ -14,58 +11,62 @@ const compat: OpenAICompletionsCompat = {
   supportsLongCacheRetention: false,
 };
 
-const models: ProviderModelConfig[] = [{
-  id: "step-3.7-flash",
-  name: "Step 3.7 Flash",
-  reasoning: true,
-  thinkingLevelMap: {
-    off: null,
-    minimal: null,
-    low: "low",
-    medium: "medium",
-    high: "high",
-    xhigh: null,
+const models: ProviderModelConfig[] = [
+  {
+    id: "step-3.7-flash",
+    name: "Step 3.7 Flash",
+    reasoning: true,
+    thinkingLevelMap: {
+      off: null,
+      minimal: null,
+      low: "low",
+      medium: "medium",
+      high: "high",
+      xhigh: null,
+    },
+    input: ["text", "image"],
+    cost: { input: 0.2, output: 1.15, cacheRead: 0.04, cacheWrite: 0 },
+    contextWindow: 256_000,
+    maxTokens: 256_000,
+    compat: { ...compat, supportsReasoningEffort: true },
   },
-  input: ["text", "image"],
-  cost: { input: 0.2, output: 1.15, cacheRead: 0.04, cacheWrite: 0 },
-  contextWindow: 256_000,
-  maxTokens: 256_000,
-  compat: { ...compat, supportsReasoningEffort: true },
-}, {
-  id: "step-3.5-flash-2603",
-  name: "Step 3.5 Flash 2603",
-  reasoning: true,
-  thinkingLevelMap: {
-    off: null,
-    minimal: null,
-    low: "low",
-    medium: null,
-    high: "high",
-    xhigh: null,
+  {
+    id: "step-3.5-flash-2603",
+    name: "Step 3.5 Flash 2603",
+    reasoning: true,
+    thinkingLevelMap: {
+      off: null,
+      minimal: null,
+      low: "low",
+      medium: null,
+      high: "high",
+      xhigh: null,
+    },
+    input: ["text"],
+    cost: { input: 0.1, output: 0.3, cacheRead: 0.02, cacheWrite: 0 },
+    contextWindow: 256_000,
+    maxTokens: 256_000,
+    compat: { ...compat, supportsReasoningEffort: true },
   },
-  input: ["text"],
-  cost: { input: 0.1, output: 0.3, cacheRead: 0.02, cacheWrite: 0 },
-  contextWindow: 256_000,
-  maxTokens: 256_000,
-  compat: { ...compat, supportsReasoningEffort: true },
-}, {
-  id: "step-3.5-flash",
-  name: "Step 3.5 Flash",
-  reasoning: true,
-  thinkingLevelMap: {
-    off: null,
-    minimal: null,
-    low: null,
-    medium: null,
-    high: "high",
-    xhigh: null,
+  {
+    id: "step-3.5-flash",
+    name: "Step 3.5 Flash",
+    reasoning: true,
+    thinkingLevelMap: {
+      off: null,
+      minimal: null,
+      low: null,
+      medium: null,
+      high: "high",
+      xhigh: null,
+    },
+    input: ["text"],
+    cost: { input: 0.1, output: 0.3, cacheRead: 0.02, cacheWrite: 0 },
+    contextWindow: 256_000,
+    maxTokens: 256_000,
+    compat,
   },
-  input: ["text"],
-  cost: { input: 0.1, output: 0.3, cacheRead: 0.02, cacheWrite: 0 },
-  contextWindow: 256_000,
-  maxTokens: 256_000,
-  compat,
-}];
+];
 
 export function registerStepFun(pi: ExtensionAPI): void {
   pi.registerProvider("stepfun-ai", {

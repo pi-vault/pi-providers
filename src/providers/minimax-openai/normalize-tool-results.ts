@@ -1,11 +1,6 @@
 // src/providers/minimax-openai/normalize-tool-results.ts
 
-import type {
-  AssistantMessage,
-  Context,
-  ToolCall,
-  ToolResultMessage,
-} from "@earendil-works/pi-ai";
+import type { AssistantMessage, Context, ToolCall, ToolResultMessage } from "@earendil-works/pi-ai";
 
 /**
  * Reorders tool result messages so they match the order of the
@@ -30,29 +25,21 @@ export function normalizeToolResults(context: Context): Context {
     // Collect consecutive toolResult messages after this assistant message
     const resultStart = i + 1;
     let resultEnd = resultStart;
-    while (
-      resultEnd < messages.length &&
-      messages[resultEnd].role === "toolResult"
-    ) {
+    while (resultEnd < messages.length && messages[resultEnd].role === "toolResult") {
       resultEnd++;
     }
 
-    const results = messages.slice(
-      resultStart,
-      resultEnd,
-    ) as ToolResultMessage[];
+    const results = messages.slice(resultStart, resultEnd) as ToolResultMessage[];
     if (results.length < 2) continue;
 
     // Sort results to match tool call order; unmatched IDs sort to the end
     const order = new Map(toolCalls.map((tc, idx) => [tc.id, idx]));
-    const sorted = [...results].sort((a, b) =>
-      (order.get(a.toolCallId) ?? Infinity) - (order.get(b.toolCallId) ?? Infinity),
+    const sorted = [...results].sort(
+      (a, b) => (order.get(a.toolCallId) ?? Infinity) - (order.get(b.toolCallId) ?? Infinity),
     );
 
     // Check if order actually changed
-    const orderChanged = sorted.some(
-      (r, idx) => r.toolCallId !== results[idx]?.toolCallId,
-    );
+    const orderChanged = sorted.some((r, idx) => r.toolCallId !== results[idx]?.toolCallId);
     if (orderChanged) {
       messages.splice(resultStart, results.length, ...sorted);
       changed = true;

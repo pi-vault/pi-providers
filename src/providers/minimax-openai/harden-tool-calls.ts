@@ -5,10 +5,7 @@ import type {
   AssistantMessageEventStream,
   ToolCall,
 } from "@earendil-works/pi-ai";
-import {
-  createAssistantMessageEventStream,
-  parseJsonWithRepair,
-} from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream, parseJsonWithRepair } from "@earendil-works/pi-ai";
 
 /**
  * Returns true when the parsed arguments object is effectively empty —
@@ -49,9 +46,7 @@ function emitDiagnosticText(
     "this is a known MiniMax-M3 limitation with complex JSON schemas. " +
     "Do not retry this tool call.]\n";
 
-  console.error(
-    `[minimax-openai] collapsed args detected for tool "${toolName}"`,
-  );
+  console.error(`[minimax-openai] collapsed args detected for tool "${toolName}"`);
 
   // contentIndex doesn't matter for downstream since cleanStream
   // will remap it; use a high value to avoid collisions
@@ -69,9 +64,7 @@ function emitDiagnosticText(
  * Designed to sit between the base driver stream and cleanStream:
  *   base → hardenToolCalls → cleanStream → Pi
  */
-export function hardenToolCalls(
-  base: AssistantMessageEventStream,
-): AssistantMessageEventStream {
+export function hardenToolCalls(base: AssistantMessageEventStream): AssistantMessageEventStream {
   const out = createAssistantMessageEventStream();
 
   void (async () => {
@@ -141,16 +134,24 @@ export function hardenToolCalls(
 
           case "done": {
             const { cacheRead, input } = ev.message.usage;
-            if (cacheRead > 0) console.error(`[minimax-openai] cache hit: ${cacheRead} tokens cached`);
-            else if (input > 1000) console.error(`[minimax-openai] cache miss: ${input} input tokens, 0 cached`);
-            if (repairs.size === 0) { out.push(ev); break; }
+            if (cacheRead > 0)
+              console.error(`[minimax-openai] cache hit: ${cacheRead} tokens cached`);
+            else if (input > 1000)
+              console.error(`[minimax-openai] cache miss: ${input} input tokens, 0 cached`);
+            if (repairs.size === 0) {
+              out.push(ev);
+              break;
+            }
             const content = ev.message.content.map((c, i) => repairs.get(i) ?? c);
             out.push({ ...ev, message: { ...ev.message, content } });
             break;
           }
 
           case "error": {
-            if (repairs.size === 0) { out.push(ev); break; }
+            if (repairs.size === 0) {
+              out.push(ev);
+              break;
+            }
             const content = ev.error.content.map((c, i) => repairs.get(i) ?? c);
             out.push({ ...ev, error: { ...ev.error, content } });
             break;
