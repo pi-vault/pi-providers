@@ -277,10 +277,7 @@ describe("cleanStream", () => {
         name: "read",
         arguments: { path: "/foo" },
       };
-      partial.content.push(
-        { type: "thinking", thinking: "" } as ThinkingContent,
-        toolCall,
-      );
+      partial.content.push({ type: "thinking", thinking: "" } as ThinkingContent, toolCall);
 
       pushEvents(base, [
         { type: "start", partial },
@@ -313,10 +310,7 @@ describe("cleanStream", () => {
         name: "bash",
         arguments: { command: "ls" },
       };
-      partial.content.push(
-        { type: "thinking", thinking: "" } as ThinkingContent,
-        toolCall,
-      );
+      partial.content.push({ type: "thinking", thinking: "" } as ThinkingContent, toolCall);
 
       pushEvents(base, [
         { type: "start", partial },
@@ -428,9 +422,7 @@ describe("cleanStream", () => {
       const done = events.find((e) => e.type === "done");
       expect(done).toBeDefined();
       if (done?.type === "done") {
-        const texts = done.message.content.filter(
-          (c): c is TextContent => c.type === "text",
-        );
+        const texts = done.message.content.filter((c): c is TextContent => c.type === "text");
         expect(texts.length).toBe(1);
         expect(texts[0].text).toBe("result");
       }

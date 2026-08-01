@@ -66,7 +66,10 @@ describe("ThinkScanner", () => {
     it("does not match partial tags that are not real think tags", () => {
       const scanner = new ThinkScanner();
       const result = scanner.feed("a < b > c <div>html</div> <thinking>not</thinking>");
-      expect(result).toEqual({ text: "a < b > c <div>html</div> <thinking>not</thinking>", think: "" });
+      expect(result).toEqual({
+        text: "a < b > c <div>html</div> <thinking>not</thinking>",
+        think: "",
+      });
     });
 
     it("does not buffer mid-text partial tag followed by non-tag chars", () => {

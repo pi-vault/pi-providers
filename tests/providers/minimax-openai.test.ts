@@ -124,10 +124,19 @@ describe("streamSimple pipeline", () => {
   }
 
   function makeResult(id: string, name: string): ToolResultMessage {
-    return { role: "toolResult", toolCallId: id, toolName: name, content: [{ type: "text", text: `result for ${id}` }], isError: false, timestamp: Date.now() };
+    return {
+      role: "toolResult",
+      toolCallId: id,
+      toolName: name,
+      content: [{ type: "text", text: `result for ${id}` }],
+      isError: false,
+      timestamp: Date.now(),
+    };
   }
 
-  async function collectEvents(stream: AsyncIterable<AssistantMessageEvent>): Promise<AssistantMessageEvent[]> {
+  async function collectEvents(
+    stream: AsyncIterable<AssistantMessageEvent>,
+  ): Promise<AssistantMessageEvent[]> {
     const events: AssistantMessageEvent[] = [];
     for await (const ev of stream) events.push(ev);
     return events;
@@ -136,11 +145,16 @@ describe("streamSimple pipeline", () => {
   it("normalizes out-of-order tool results before passing context to driver", () => {
     const tc1: ToolCall = { type: "toolCall", id: "tc_a", name: "read", arguments: {} };
     const tc2: ToolCall = { type: "toolCall", id: "tc_b", name: "bash", arguments: {} };
-    const context: Context = { messages: [makeMsg([tc1, tc2]), makeResult("tc_b", "bash"), makeResult("tc_a", "read")] };
+    const context: Context = {
+      messages: [makeMsg([tc1, tc2]), makeResult("tc_b", "bash"), makeResult("tc_a", "read")],
+    };
 
     let capturedContext: Context | undefined;
     vi.mocked(getApiProvider).mockReturnValue({
-      streamSimple: (_model: unknown, ctx: Context) => { capturedContext = ctx; return createAssistantMessageEventStream(); },
+      streamSimple: (_model: unknown, ctx: Context) => {
+        capturedContext = ctx;
+        return createAssistantMessageEventStream();
+      },
     } as unknown as ReturnType<typeof getApiProvider>);
 
     const streamSimple = getStreamSimple();
@@ -157,18 +171,33 @@ describe("streamSimple pipeline", () => {
     const msg = makeMsg();
     base.push({ type: "start", partial: msg });
     base.push({ type: "text_start", contentIndex: 0, partial: msg });
-    base.push({ type: "text_delta", contentIndex: 0, delta: "<think>hidden</think>visible", partial: msg });
-    base.push({ type: "text_end", contentIndex: 0, content: "<think>hidden</think>visible", partial: msg });
+    base.push({
+      type: "text_delta",
+      contentIndex: 0,
+      delta: "<think>hidden</think>visible",
+      partial: msg,
+    });
+    base.push({
+      type: "text_end",
+      contentIndex: 0,
+      content: "<think>hidden</think>visible",
+      partial: msg,
+    });
     base.push({ type: "done", reason: "stop", message: msg });
 
-    vi.mocked(getApiProvider).mockReturnValue({ streamSimple: () => base } as unknown as ReturnType<typeof getApiProvider>);
+    vi.mocked(getApiProvider).mockReturnValue({ streamSimple: () => base } as unknown as ReturnType<
+      typeof getApiProvider
+    >);
 
     const streamSimple = getStreamSimple();
     const events = await collectEvents(streamSimple({}, { messages: [] } as Context, undefined));
 
     const allText = events
-      .filter((e): e is Extract<AssistantMessageEvent, { type: "text_delta" }> => e.type === "text_delta")
-      .map((e) => e.delta).join("");
+      .filter(
+        (e): e is Extract<AssistantMessageEvent, { type: "text_delta" }> => e.type === "text_delta",
+      )
+      .map((e) => e.delta)
+      .join("");
     expect(allText).toBe("visible");
   });
 
@@ -178,16 +207,31 @@ describe("streamSimple pipeline", () => {
     const base = createAssistantMessageEventStream();
     base.push({ type: "start", partial: makeMsg() });
     base.push({ type: "toolcall_start", contentIndex: 0, partial: msgWithTool });
-    base.push({ type: "toolcall_delta", contentIndex: 0, delta: '{"path":"foo"}', partial: msgWithTool });
-    base.push({ type: "toolcall_end", contentIndex: 0, toolCall: brokenTool, partial: msgWithTool });
+    base.push({
+      type: "toolcall_delta",
+      contentIndex: 0,
+      delta: '{"path":"foo"}',
+      partial: msgWithTool,
+    });
+    base.push({
+      type: "toolcall_end",
+      contentIndex: 0,
+      toolCall: brokenTool,
+      partial: msgWithTool,
+    });
     base.push({ type: "done", reason: "toolUse", message: msgWithTool });
 
-    vi.mocked(getApiProvider).mockReturnValue({ streamSimple: () => base } as unknown as ReturnType<typeof getApiProvider>);
+    vi.mocked(getApiProvider).mockReturnValue({ streamSimple: () => base } as unknown as ReturnType<
+      typeof getApiProvider
+    >);
 
     const streamSimple = getStreamSimple();
     const events = await collectEvents(streamSimple({}, { messages: [] } as Context, undefined));
 
-    const toolcallEnd = events.find((e): e is Extract<AssistantMessageEvent, { type: "toolcall_end" }> => e.type === "toolcall_end");
+    const toolcallEnd = events.find(
+      (e): e is Extract<AssistantMessageEvent, { type: "toolcall_end" }> =>
+        e.type === "toolcall_end",
+    );
     expect(toolcallEnd).toBeDefined();
     expect(toolcallEnd!.toolCall.arguments).toEqual({ path: "foo" });
   });

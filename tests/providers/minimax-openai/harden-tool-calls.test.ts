@@ -10,9 +10,7 @@ import type {
 import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { hardenToolCalls } from "../../../src/providers/minimax-openai/harden-tool-calls.ts";
 
-function makePartial(
-  content: AssistantMessage["content"] = [],
-): AssistantMessage {
+function makePartial(content: AssistantMessage["content"] = []): AssistantMessage {
   return {
     role: "assistant",
     content,
@@ -394,7 +392,10 @@ describe("hardenToolCalls", () => {
       const toolEnds = events.filter((e) => e.type === "toolcall_end");
       expect(toolEnds).toHaveLength(2);
       if (toolEnds[0]?.type === "toolcall_end" && toolEnds[1]?.type === "toolcall_end") {
-        expect(toolEnds[0].toolCall.arguments).toEqual({ path: "/foo.ts", content: "line1\nline2" });
+        expect(toolEnds[0].toolCall.arguments).toEqual({
+          path: "/foo.ts",
+          content: "line1\nline2",
+        });
         expect(toolEnds[1].toolCall.arguments).toEqual({ path: "/bar.ts" });
       }
     });
@@ -585,9 +586,7 @@ describe("hardenToolCalls", () => {
       await collectEvents(hardenToolCalls(base));
 
       const logCalls = spy.mock.calls.map((c) => c.join(" "));
-      expect(
-        logCalls.some((l) => l.includes("cache hit") && l.includes("5000")),
-      ).toBe(true);
+      expect(logCalls.some((l) => l.includes("cache hit") && l.includes("5000"))).toBe(true);
       spy.mockRestore();
     });
 
@@ -606,9 +605,7 @@ describe("hardenToolCalls", () => {
       await collectEvents(hardenToolCalls(base));
 
       const logCalls = spy.mock.calls.map((c) => c.join(" "));
-      expect(
-        logCalls.some((l) => l.includes("cache miss") && l.includes("5000")),
-      ).toBe(true);
+      expect(logCalls.some((l) => l.includes("cache miss") && l.includes("5000"))).toBe(true);
       spy.mockRestore();
     });
 
@@ -630,6 +627,5 @@ describe("hardenToolCalls", () => {
       expect(logCalls.some((l) => l.includes("cache"))).toBe(false);
       spy.mockRestore();
     });
-
   });
 });

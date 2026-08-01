@@ -30,10 +30,7 @@ interface ThinkingSegment {
   signature?: string;
 }
 
-function scanLeakedToolMarkup(
-  state: TextState,
-  chunk: string,
-): { text: string; leaked: boolean } {
+function scanLeakedToolMarkup(state: TextState, chunk: string): { text: string; leaked: boolean } {
   const combined = state.leakedToolMarkupBuffer + chunk;
   const index = combined.indexOf(LEAKED_TOOL_MARKUP_SENTINEL);
   if (index >= 0) {
@@ -65,7 +62,10 @@ export function cleanStream(base: AssistantMessageEventStream): AssistantMessage
     let segment: ThinkingSegment | undefined;
 
     const syncMeta = (partial: AssistantMessage) => {
-      if (!output) { output = { ...partial, content: [] }; return; }
+      if (!output) {
+        output = { ...partial, content: [] };
+        return;
+      }
       const { content: _, ...meta } = partial;
       Object.assign(output, meta);
     };

@@ -4,9 +4,7 @@ import { registerStepFun } from "../../src/providers/stepfun-ai.ts";
 describe("registerStepFun", () => {
   it("registers the Step Plan endpoint and all three Step models", () => {
     const registerProvider = vi.fn();
-    const pi = { registerProvider } as unknown as Parameters<
-      typeof registerStepFun
-    >[0];
+    const pi = { registerProvider } as unknown as Parameters<typeof registerStepFun>[0];
 
     registerStepFun(pi);
 

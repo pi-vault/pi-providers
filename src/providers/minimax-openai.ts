@@ -21,16 +21,18 @@ const compat: OpenAICompletionsCompat = {
   maxTokensField: "max_tokens",
 };
 
-const models: ProviderModelConfig[] = [{
-  id: "MiniMax-M3",
-  name: "MiniMax-M3",
-  reasoning: true,
-  input: ["text", "image"],
-  cost: { input: 0.6, output: 2.4, cacheRead: 0.12, cacheWrite: 0 },
-  contextWindow: 1_000_000,
-  maxTokens: 512_000,
-  compat,
-}];
+const models: ProviderModelConfig[] = [
+  {
+    id: "MiniMax-M3",
+    name: "MiniMax-M3",
+    reasoning: true,
+    input: ["text", "image"],
+    cost: { input: 0.6, output: 2.4, cacheRead: 0.12, cacheWrite: 0 },
+    contextWindow: 1_000_000,
+    maxTokens: 512_000,
+    compat,
+  },
+];
 
 function registerMiniMaxVariant(
   pi: ExtensionAPI,
@@ -52,11 +54,7 @@ function registerMiniMaxVariant(
       const driver = getApiProvider("openai-completions");
       if (!driver) throw new Error("openai-completions api provider not registered");
       const ctx = normalizeToolResults(context);
-      const base = driver.streamSimple(
-        { ...model, api: "openai-completions" },
-        ctx,
-        options,
-      );
+      const base = driver.streamSimple({ ...model, api: "openai-completions" }, ctx, options);
       return cleanStream(hardenToolCalls(base));
     },
     models,

@@ -22,7 +22,9 @@ describe("providers extension", () => {
 
     createExtension(mockPi);
 
-    const globalCall = registerProvider.mock.calls.find((call: unknown[]) => call[0] === "minimax-openai");
+    const globalCall = registerProvider.mock.calls.find(
+      (call: unknown[]) => call[0] === "minimax-openai",
+    );
     expect(globalCall).toBeDefined();
     expect(globalCall?.[1].baseUrl).toBe("https://api.minimax.io/v1");
     expect(globalCall?.[1].apiKey).toBe("$MINIMAX_API_KEY");
@@ -34,7 +36,9 @@ describe("providers extension", () => {
 
     createExtension(mockPi);
 
-    const cnCall = registerProvider.mock.calls.find((call: unknown[]) => call[0] === "minimax-openai-cn");
+    const cnCall = registerProvider.mock.calls.find(
+      (call: unknown[]) => call[0] === "minimax-openai-cn",
+    );
     expect(cnCall).toBeDefined();
     expect(cnCall?.[1].baseUrl).toBe("https://api.minimaxi.com/v1");
     expect(cnCall?.[1].apiKey).toBe("$MINIMAX_CN_API_KEY");

@@ -34,10 +34,7 @@ function makeToolCall(id: string, name: string): ToolCall {
   return { type: "toolCall", id, name, arguments: {} };
 }
 
-function makeToolResult(
-  toolCallId: string,
-  toolName: string,
-): ToolResultMessage {
+function makeToolResult(toolCallId: string, toolName: string): ToolResultMessage {
   return {
     role: "toolResult",
     toolCallId,
@@ -72,18 +69,13 @@ describe("normalizeToolResults", () => {
     };
 
     const result = normalizeToolResults(ctx);
-    const results = result.messages.filter(
-      (m): m is ToolResultMessage => m.role === "toolResult",
-    );
+    const results = result.messages.filter((m): m is ToolResultMessage => m.role === "toolResult");
 
     expect(results.map((r) => r.toolCallId)).toEqual(["tc_a", "tc_b", "tc_c"]);
   });
 
   it("does not modify already-ordered results", () => {
-    const assistant = makeAssistant([
-      makeToolCall("tc_a", "read"),
-      makeToolCall("tc_b", "bash"),
-    ]);
+    const assistant = makeAssistant([makeToolCall("tc_a", "read"), makeToolCall("tc_b", "bash")]);
 
     const ctx: Context = {
       messages: [
@@ -95,9 +87,7 @@ describe("normalizeToolResults", () => {
     };
 
     const result = normalizeToolResults(ctx);
-    const results = result.messages.filter(
-      (m): m is ToolResultMessage => m.role === "toolResult",
-    );
+    const results = result.messages.filter((m): m is ToolResultMessage => m.role === "toolResult");
 
     expect(results.map((r) => r.toolCallId)).toEqual(["tc_a", "tc_b"]);
     // Returns same reference when no changes needed
@@ -108,11 +98,7 @@ describe("normalizeToolResults", () => {
     const assistant = makeAssistant([makeToolCall("tc_a", "read")]);
 
     const ctx: Context = {
-      messages: [
-        makeUser("read something"),
-        assistant,
-        makeToolResult("tc_a", "read"),
-      ],
+      messages: [makeUser("read something"), assistant, makeToolResult("tc_a", "read")],
     };
 
     const result = normalizeToolResults(ctx);
@@ -120,10 +106,7 @@ describe("normalizeToolResults", () => {
   });
 
   it("does not mutate the input context", () => {
-    const assistant = makeAssistant([
-      makeToolCall("tc_a", "read"),
-      makeToolCall("tc_b", "bash"),
-    ]);
+    const assistant = makeAssistant([makeToolCall("tc_a", "read"), makeToolCall("tc_b", "bash")]);
 
     const resultC = makeToolResult("tc_b", "bash");
     const resultA = makeToolResult("tc_a", "read");
@@ -138,9 +121,7 @@ describe("normalizeToolResults", () => {
 
     normalizeToolResults(ctx);
 
-    const afterOrder = ctx.messages.map((m) =>
-      m.role === "toolResult" ? m.toolCallId : m.role,
-    );
+    const afterOrder = ctx.messages.map((m) => (m.role === "toolResult" ? m.toolCallId : m.role));
 
     expect(afterOrder).toEqual(originalOrder);
   });
@@ -163,9 +144,7 @@ describe("normalizeToolResults", () => {
     };
 
     const result = normalizeToolResults(ctx);
-    const results = result.messages.filter(
-      (m): m is ToolResultMessage => m.role === "toolResult",
-    );
+    const results = result.messages.filter((m): m is ToolResultMessage => m.role === "toolResult");
 
     // Should reorder to match tool call order, with tc_b missing
     expect(results.map((r) => r.toolCallId)).toEqual(["tc_a", "tc_c"]);
@@ -181,23 +160,15 @@ describe("normalizeToolResults", () => {
     };
 
     const result = normalizeToolResults(ctx);
-    const results = result.messages.filter(
-      (m): m is ToolResultMessage => m.role === "toolResult",
-    );
+    const results = result.messages.filter((m): m is ToolResultMessage => m.role === "toolResult");
 
     expect(results.map((r) => r.toolCallId)).toEqual(["tc_a", "tc_b"]);
     expect(result).toBe(ctx);
   });
 
   it("handles multiple assistant-result groups", () => {
-    const assistant1 = makeAssistant([
-      makeToolCall("tc_a", "read"),
-      makeToolCall("tc_b", "bash"),
-    ]);
-    const assistant2 = makeAssistant([
-      makeToolCall("tc_x", "grep"),
-      makeToolCall("tc_y", "write"),
-    ]);
+    const assistant1 = makeAssistant([makeToolCall("tc_a", "read"), makeToolCall("tc_b", "bash")]);
+    const assistant2 = makeAssistant([makeToolCall("tc_x", "grep"), makeToolCall("tc_y", "write")]);
 
     const ctx: Context = {
       messages: [
@@ -213,9 +184,7 @@ describe("normalizeToolResults", () => {
     };
 
     const result = normalizeToolResults(ctx);
-    const results = result.messages.filter(
-      (m): m is ToolResultMessage => m.role === "toolResult",
-    );
+    const results = result.messages.filter((m): m is ToolResultMessage => m.role === "toolResult");
 
     expect(results.map((r) => r.toolCallId)).toEqual([
       "tc_a",

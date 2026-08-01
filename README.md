@@ -61,7 +61,7 @@ Cache writes are free for all models.
 ## Known Limits
 
 - **Key matching.** The provider code passes the corresponding environment-variable reference (`$MINIMAX_API_KEY`, `$MINIMAX_CN_API_KEY`, `$STEP_API_KEY`) to Pi. If the variable is unset, the provider cannot authenticate.
-- **MiniMax tool-call hardening.** MiniMax wraps its stream with a provider-specific pipeline that folds inline `think` blocks into a proper `thinking` content block, repairs empty `{}` tool-call arguments via second-chance JSON parse, and reorders tool-result messages to match the order of preceding `tool_use` blocks. M3 rejects mismatched ordering.
+- **MiniMax tool-call hardening.** MiniMax wraps its stream with a provider-specific pipeline that folds inline `think` blocks into a proper `thinking` content block, repairs empty `{}` tool-call arguments via second-chance JSON parse, reorders tool-result messages to match the order of preceding `tool_use` blocks (M3 rejects mismatched ordering), and fails closed with a retryable error if the upstream ever emits internal tool-call markup instead of proper OpenAI tool calls.
 - **StepFun native stream.** StepFun uses Pi's built-in OpenAI-compatible driver directly, without the MiniMax hardening pipeline.
 - **Deeply nested tool schemas.** MiniMax M3 may produce collapsed nested arguments on complex JSON schemas. The package emits a diagnostic message instead of retrying.
 
