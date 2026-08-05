@@ -43,12 +43,14 @@ Ask Pi normally; there is no provider-specific prompt syntax. Image input works 
 
 ## Providers And Models
 
-| Provider                               | Model                 | Input       | Reasoning                 | Context   | Max output | Input / output per 1M tokens | Cache read |
-| -------------------------------------- | --------------------- | ----------- | ------------------------- | --------- | ---------- | ---------------------------- | ---------- |
-| `minimax-openai` / `minimax-openai-cn` | `MiniMax-M3`          | text, image | yes                       | 1,000,000 | 512,000    | $0.60 / $2.40                | $0.12      |
-| `stepfun-ai`                           | `step-3.7-flash`      | text, image | low / medium / high       | 256,000   | 256,000    | $0.20 / $1.15                | $0.04      |
-| `stepfun-ai`                           | `step-3.5-flash-2603` | text        | low / high                | 256,000   | 256,000    | $0.10 / $0.30                | $0.02      |
-| `stepfun-ai`                           | `step-3.5-flash`      | text        | automatic (shown as high) | 256,000   | 256,000    | $0.10 / $0.30                | $0.02      |
+| Provider                               | Model                       | Input       | Reasoning                 | Context   | Max output | Input / output per 1M tokens | Cache read |
+| -------------------------------------- | --------------------------- | ----------- | ------------------------- | --------- | ---------- | ---------------------------- | ---------- |
+| `minimax-openai` / `minimax-openai-cn` | `MiniMax-M3`                | text, image | yes                       | 1,000,000 | 512,000    | $0.60 / $2.40                | $0.12      |
+| `minimax-openai` / `minimax-openai-cn` | `MiniMax-M2.7`              | text        | yes                       | 204,800   | 131,072    | $0.30 / $1.20                | $0.06      |
+| `minimax-openai` / `minimax-openai-cn` | `MiniMax-M2.7-highspeed`    | text        | yes                       | 204,800   | 131,072    | $0.60 / $2.40                | $0.06      |
+| `stepfun-ai`                           | `step-3.7-flash`            | text, image | low / medium / high       | 256,000   | 256,000    | $0.20 / $1.15                | $0.04      |
+| `stepfun-ai`                           | `step-3.5-flash-2603`       | text        | low / high                | 256,000   | 256,000    | $0.10 / $0.30                | $0.02      |
+| `stepfun-ai`                           | `step-3.5-flash`            | text        | automatic (shown as high) | 256,000   | 256,000    | $0.10 / $0.30                | $0.02      |
 
 API bases:
 
@@ -56,14 +58,14 @@ API bases:
 - `minimax-openai-cn`: `https://api.minimaxi.com/v1`
 - `stepfun-ai`: `https://api.stepfun.ai/step_plan/v1`
 
-Cache writes are free for all models.
+Cache writes are free for `MiniMax-M3`. They cost $0.375 per 1M tokens for `MiniMax-M2.7` and `MiniMax-M2.7-highspeed`. They are free for all `stepfun-ai` models.
 
 ## Known Limits
 
 - **Key matching.** The provider code passes the corresponding environment-variable reference (`$MINIMAX_API_KEY`, `$MINIMAX_CN_API_KEY`, `$STEP_API_KEY`) to Pi. If the variable is unset, the provider cannot authenticate.
-- **MiniMax tool-call hardening.** MiniMax wraps its stream with a provider-specific pipeline that folds inline `think` blocks into a proper `thinking` content block, repairs empty `{}` tool-call arguments via second-chance JSON parse, reorders tool-result messages to match the order of preceding `tool_use` blocks (M3 rejects mismatched ordering), and fails closed with a retryable error if the upstream ever emits internal tool-call markup instead of proper OpenAI tool calls.
+- **MiniMax tool-call hardening.** The `minimax-openai` and `minimax-openai-cn` providers wrap their streams with a MiniMax-specific pipeline that folds inline `think` blocks into a proper `thinking` content block, repairs empty `{}` tool-call arguments via second-chance JSON parse, reorders tool-result messages to match the order of preceding `tool_use` blocks (the MiniMax API rejects mismatched ordering), and fails closed with a retryable error if the upstream ever emits internal tool-call markup instead of proper OpenAI tool calls.
 - **StepFun native stream.** StepFun uses Pi's built-in OpenAI-compatible driver directly, without the MiniMax hardening pipeline.
-- **Deeply nested tool schemas.** MiniMax M3 may produce collapsed nested arguments on complex JSON schemas. The package emits a diagnostic message instead of retrying.
+- **Deeply nested tool schemas.** The MiniMax API may produce collapsed nested arguments on complex JSON schemas; this has been observed with `MiniMax-M3`. The package emits a diagnostic message instead of retrying.
 
 ## Development And Verification
 

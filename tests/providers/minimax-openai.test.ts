@@ -12,6 +12,13 @@ import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { getApiProvider } from "@earendil-works/pi-ai/compat";
 import { registerMiniMax } from "../../src/providers/minimax-openai.ts";
 
+const MINIMAX_OPENAI_COMPAT = {
+  supportsStore: false,
+  supportsDeveloperRole: false,
+  supportsReasoningEffort: false,
+  maxTokensField: "max_tokens" as const,
+};
+
 vi.mock("@earendil-works/pi-ai/compat", () => ({
   getApiProvider: vi.fn(),
 }));
@@ -61,27 +68,40 @@ describe("registerMiniMax", () => {
     expect(typeof config.streamSimple).toBe("function");
   });
 
-  it("registers a single MiniMax-M3 model", () => {
+  it("registers M3, M2.7, and M2.7-highspeed models with correct metadata", () => {
     const registerProvider = registerProviders();
 
     const config = registration(registerProvider, "minimax-openai");
-    expect(config.models).toHaveLength(1);
-    expect(config.models[0].id).toBe("MiniMax-M3");
-    expect(config.models[0].reasoning).toBe(true);
-    expect(config.models[0].input).toEqual(["text", "image"]);
-    expect(config.models[0].cost).toEqual({
-      input: 0.6,
-      output: 2.4,
-      cacheRead: 0.12,
-      cacheWrite: 0,
+    expect(config.models).toHaveLength(3);
+
+    expect(config.models[0]).toMatchObject({
+      id: "MiniMax-M3",
+      reasoning: true,
+      input: ["text", "image"],
+      cost: { input: 0.6, output: 2.4, cacheRead: 0.12, cacheWrite: 0 },
+      contextWindow: 1_000_000,
+      maxTokens: 512_000,
+      compat: MINIMAX_OPENAI_COMPAT,
     });
-    expect(config.models[0].contextWindow).toBe(1_000_000);
-    expect(config.models[0].maxTokens).toBe(512_000);
-    expect(config.models[0].compat).toMatchObject({
-      supportsStore: false,
-      supportsDeveloperRole: false,
-      supportsReasoningEffort: false,
-      maxTokensField: "max_tokens",
+
+    expect(config.models[1]).toMatchObject({
+      id: "MiniMax-M2.7",
+      reasoning: true,
+      input: ["text"],
+      cost: { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0.375 },
+      contextWindow: 204_800,
+      maxTokens: 131_072,
+      compat: MINIMAX_OPENAI_COMPAT,
+    });
+
+    expect(config.models[2]).toMatchObject({
+      id: "MiniMax-M2.7-highspeed",
+      reasoning: true,
+      input: ["text"],
+      cost: { input: 0.6, output: 2.4, cacheRead: 0.06, cacheWrite: 0.375 },
+      contextWindow: 204_800,
+      maxTokens: 131_072,
+      compat: MINIMAX_OPENAI_COMPAT,
     });
   });
 });

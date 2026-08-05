@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-08-05
+
+### Added
+
+- `MiniMax-M2.7` reasoning model on the `minimax-openai` and `minimax-openai-cn` providers (204,800 context, 131,072 max output, $0.30 / $1.20 per 1M tokens, $0.06 cache read, $0.375 cache write).
+- `MiniMax-M2.7-highspeed` reasoning model on the same providers (same context as M2.7, $0.60 / $2.40 per 1M tokens, faster inference).
+
 ## [0.2.1] - 2026-08-01
 
 ### Fixed
