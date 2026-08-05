@@ -12,6 +12,13 @@ import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { getApiProvider } from "@earendil-works/pi-ai/compat";
 import { registerMiniMax } from "../../src/providers/minimax-openai.ts";
 
+const MINIMAX_OPENAI_COMPAT = {
+  supportsStore: false,
+  supportsDeveloperRole: false,
+  supportsReasoningEffort: false,
+  maxTokensField: "max_tokens" as const,
+};
+
 vi.mock("@earendil-works/pi-ai/compat", () => ({
   getApiProvider: vi.fn(),
 }));
@@ -69,50 +76,32 @@ describe("registerMiniMax", () => {
 
     expect(config.models[0]).toMatchObject({
       id: "MiniMax-M3",
-      name: "MiniMax-M3",
       reasoning: true,
       input: ["text", "image"],
       cost: { input: 0.6, output: 2.4, cacheRead: 0.12, cacheWrite: 0 },
       contextWindow: 1_000_000,
       maxTokens: 512_000,
-      compat: {
-        supportsStore: false,
-        supportsDeveloperRole: false,
-        supportsReasoningEffort: false,
-        maxTokensField: "max_tokens",
-      },
+      compat: MINIMAX_OPENAI_COMPAT,
     });
 
     expect(config.models[1]).toMatchObject({
       id: "MiniMax-M2.7",
-      name: "MiniMax-M2.7",
       reasoning: true,
       input: ["text"],
       cost: { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0.375 },
       contextWindow: 204_800,
       maxTokens: 131_072,
-      compat: {
-        supportsStore: false,
-        supportsDeveloperRole: false,
-        supportsReasoningEffort: false,
-        maxTokensField: "max_tokens",
-      },
+      compat: MINIMAX_OPENAI_COMPAT,
     });
 
     expect(config.models[2]).toMatchObject({
       id: "MiniMax-M2.7-highspeed",
-      name: "MiniMax-M2.7-highspeed",
       reasoning: true,
       input: ["text"],
       cost: { input: 0.6, output: 2.4, cacheRead: 0.06, cacheWrite: 0.375 },
       contextWindow: 204_800,
       maxTokens: 131_072,
-      compat: {
-        supportsStore: false,
-        supportsDeveloperRole: false,
-        supportsReasoningEffort: false,
-        maxTokensField: "max_tokens",
-      },
+      compat: MINIMAX_OPENAI_COMPAT,
     });
   });
 });
