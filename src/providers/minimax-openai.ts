@@ -32,6 +32,26 @@ const models: ProviderModelConfig[] = [
     maxTokens: 512_000,
     compat,
   },
+  {
+    id: "MiniMax-M2.7",
+    name: "MiniMax-M2.7",
+    reasoning: true,
+    input: ["text"],
+    cost: { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0.375 },
+    contextWindow: 204_800,
+    maxTokens: 131_072,
+    compat,
+  },
+  {
+    id: "MiniMax-M2.7-highspeed",
+    name: "MiniMax-M2.7-highspeed",
+    reasoning: true,
+    input: ["text"],
+    cost: { input: 0.6, output: 2.4, cacheRead: 0.06, cacheWrite: 0.375 },
+    contextWindow: 204_800,
+    maxTokens: 131_072,
+    compat,
+  },
 ];
 
 function registerMiniMaxVariant(
