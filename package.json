@@ -2,7 +2,7 @@
   "name": "@pi-vault/pi-providers",
   "version": "0.2.2",
   "type": "module",
-  "description": "Pi extension that adds MiniMax and StepFun custom model providers",
+  "description": "Pi extension that adds MiniMax, StepFun, and Command Code model providers",
   "author": "Lanh Hoang <lanhhoang@users.noreply.github.com>",
   "license": "MIT",
   "homepage": "https://github.com/pi-vault/pi-providers#readme",
@@ -22,6 +22,7 @@
     "custom-providers",
     "minimax",
     "stepfun",
+    "command-code",
     "openai-compatible"
   ],
   "scripts": {
