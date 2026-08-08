@@ -4,13 +4,13 @@
 
 **Parent plan:** [2026-08-08-command-code-provider.md](./2026-08-08-command-code-provider.md)
 
-**Previous phases:** [Phase 1 static provider](./2026-08-08-command-code-provider-phase-1-static-provider.md) and [Phase 2 metadata enrichment](./2026-08-08-command-code-provider-phase-2-metadata-enrichment.md)
+**Previous phases:** [Phase 1 static provider](./2026-08-08-command-code-provider-phase-1-static-provider.md) and [Phase 2 pricing enrichment](./2026-08-08-command-code-provider-phase-2-metadata-enrichment.md)
 
 **Goal:** Add validated live model discovery with Pi-managed persistence, restoration, freshness, and failure retention.
 
 **Prerequisite:** Phases 1 and 2 are complete and their phase gates pass.
 
-**Usable result:** The provider starts with the enriched bundled catalog, restores the last successful live overlay offline, checks the public catalog at most every four hours, and retains a valid previous catalog through all refresh failures.
+**Usable result:** The provider starts with the capability- and pricing-enriched bundled catalog, restores the last successful live overlay offline, checks the public catalog at most every four hours, and retains a valid previous catalog through all refresh failures.
 
 **Architecture:** Use `createProvider`’s native `fetchModels` lifecycle so Pi owns the provider-scoped model store and transactional publication. Add only a wrapper that skips fresh online phases; never write the store directly or refresh from `session_start`.
 
@@ -195,4 +195,3 @@ With `CMD_API_KEY` configured, select one Claude and one non-Claude model and co
 - Stale and forced refreshes validate, persist, and publish complete model lists.
 - HTTP, parsing, validation, timeout, and cancellation failures never remove a valid catalog.
 - `pnpm check` passes and the parent plan is unchanged.
-

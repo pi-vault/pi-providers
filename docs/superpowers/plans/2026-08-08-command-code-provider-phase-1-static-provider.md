@@ -4,157 +4,148 @@
 
 **Parent plan:** [2026-08-08-command-code-provider.md](./2026-08-08-command-code-provider.md)
 
-**Goal:** Ship a usable static Command Code provider with mixed Anthropic/OpenAI routing and conservative model defaults.
+**Goal:** Ship an offline-capable native Command Code provider with a build-time snapshot of the current catalog, mixed Anthropic/OpenAI routing, Pi-derived capabilities, and optional ZDR.
 
-**Prerequisite:** None. This phase intentionally does not perform runtime catalog discovery.
+**Prerequisite:** Pi 0.84.1 development dependencies are already installed by commit `9a38a71`; keep the existing wildcard peer dependencies.
 
-**Usable result:** Pi users can select bundled Command Code models, authenticate with `CMD_API_KEY`, send Claude and non-Claude requests, and opt into ZDR with `CMD_ZDR=1`. Model metadata changes only when the extension package is updated.
+**Usable result:** Pi users can select every model captured from Command Code’s public `/provider/v1/models` endpoint, send Claude and non-Claude requests, use known vision/reasoning/output metadata, authenticate with `CMD_API_KEY`, and opt into ZDR with `CMD_ZDR=1`. No catalog request occurs at runtime in this phase.
 
-**Architecture:** Require Pi 0.84+, construct a native provider with `createProvider`, and use a bundled Command Code snapshot as its static model list. Claude IDs use `anthropic-messages`; all other IDs use `openai-completions`. Unknown capability and pricing fields use safe defaults until Phase 2 enriches them.
+**Architecture:** Command Code owns model ID, display name, context window, endpoint, and API-family routing. Pi’s bundled catalog, generated from models.dev data, supplies portable reasoning, input, and output-limit traits through deterministic exact-ID/name matching. Costs remain zero until Phase 2 snapshots Command-specific prices.
 
-**Tech Stack:** TypeScript, `@earendil-works/pi-ai` 0.84+, `@earendil-works/pi-coding-agent` 0.84+, Vitest, Biome, pnpm.
+**Tech Stack:** TypeScript, `@earendil-works/pi-ai` 0.84.1, `@earendil-works/pi-coding-agent` 0.84.1, native `fetch` for build-time capture, Vitest, Biome, pnpm.
 
 ---
 
 ## Files
 
-- Modify `package.json` and `pnpm-lock.yaml` for the Pi 0.84+ contract.
-- Create `src/providers/command-code/models.ts` for the bundled snapshot and conservative conversion.
-- Create `src/providers/command-code.ts` for provider construction without `fetchModels`.
-- Modify `src/index.ts` to register the provider.
-- Create/modify `tests/providers/command-code.test.ts` for conversion and provider behavior.
-- Modify `tests/index.test.ts` for registration order.
-- Modify `README.md` and `CHANGELOG.md` with the static-provider behavior.
+- `src/providers/command-code/models.ts`: static snapshot, donor matching, conversion, and conservative compatibility defaults.
+- `src/providers/command-code.ts`: native provider construction, auth, headers, and API implementations; no `fetchModels`.
+- `src/index.ts`: native provider registration after the existing providers.
+- `tests/providers/command-code.test.ts`: snapshot, conversion, provider, and ZDR tests.
+- `tests/index.test.ts`: registration order and native-provider assertions.
+- `package.json`, `README.md`, `CHANGELOG.md`: package metadata and user-facing documentation.
 
-### Task 1: Upgrade the Pi dependency contract
+### Task 1: Add the static catalog and conversion
 
-- [ ] **Step 1: Change both Pi dependency ranges**
+**Files:**
 
-In `package.json`, set both development dependencies and both peer dependencies to `^0.84.1`:
+- Create: `src/providers/command-code/models.ts`
+- Create: `tests/providers/command-code.test.ts`
 
-```json
-"@earendil-works/pi-ai": "^0.84.1",
-"@earendil-works/pi-coding-agent": "^0.84.1"
-```
+- [ ] **Step 1: Capture and validate the Command snapshot**
 
-- [ ] **Step 2: Refresh and typecheck dependencies**
-
-Run:
-
-```bash
-pnpm install --lockfile-only
-pnpm typecheck
-```
-
-Expected: the lockfile resolves Pi 0.84.1-compatible packages and the existing providers typecheck.
-
-- [ ] **Step 3: Commit the dependency change**
-
-```bash
-git add package.json pnpm-lock.yaml
-git commit -m "build: require Pi 0.84 provider APIs"
-```
-
-### Task 2: Add the static catalog and conservative conversion
-
-- [ ] **Step 1: Capture the public model snapshot**
-
-Run:
-
-```bash
-curl --fail --silent --show-error https://api.commandcode.ai/provider/v1/models \
-  -o /tmp/command-code-models.json
-```
-
-Copy every returned record into `COMMAND_CODE_CATALOG` with only `id`, `name`, and `contextWindow`. Preserve unique IDs and do not add upstream-provider, pricing, or temporary-promotion fields.
+Fetch `https://api.commandcode.ai/provider/v1/models` during implementation. Require `object === "list"`, a non-empty `data` array, unique nonblank string IDs/names, and positive integer `context_length` values. The current response contains 52 records. Commit only `id`, `name`, and `contextWindow`; omit `object`, timestamps, ownership, upstream names, and promotions.
 
 - [ ] **Step 2: Write failing conversion tests**
 
-Create `tests/providers/command-code.test.ts` with tests asserting Claude routing, non-Claude routing, Command-authoritative names/contexts, and unknown defaults:
+Cover:
 
 ```ts
-it("routes Claude records to Anthropic Messages", () => {
-  expect(modelFromCatalogRecord({
+expect(
+  modelFromCatalogRecord({
     id: "claude-sonnet-5",
     name: "Claude Sonnet 5",
     contextWindow: 1_000_000,
-  })).toMatchObject({
-    api: "anthropic-messages",
-    provider: "command-code",
-    contextWindow: 1_000_000,
-  });
+  }),
+).toMatchObject({
+  id: "claude-sonnet-5",
+  api: "anthropic-messages",
+  provider: "command-code",
+  contextWindow: 1_000_000,
 });
-
-it("routes non-Claude records to OpenAI Completions", () => {
-  expect(modelFromCatalogRecord({
+expect(
+  modelFromCatalogRecord({
     id: "deepseek/deepseek-v4-flash",
     name: "DeepSeek V4 Flash",
     contextWindow: 1_000_000,
-  }).api).toBe("openai-completions");
-});
-
-it("uses conservative defaults when no Pi metadata exists", () => {
-  expect(modelFromCatalogRecord({
+  }).api,
+).toBe("openai-completions");
+expect(
+  modelFromCatalogRecord({
     id: "new/vendor-model",
     name: "New Vendor Model",
     contextWindow: 32_000,
-  })).toMatchObject({
-    reasoning: false,
-    input: ["text"],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    maxTokens: 16_384,
-  });
-});
-```
-
-- [ ] **Step 3: Confirm the tests fail**
-
-Run `pnpm vitest run tests/providers/command-code.test.ts`. Expected: failure because the catalog module does not exist.
-
-- [ ] **Step 4: Implement `models.ts`**
-
-Define the catalog record type, `COMMAND_CODE_BASE_URL`, `COMMAND_CODE_CATALOG`, `modelFromCatalogRecord`, and `commandCodeModels`. For Phase 1, every converted model must set:
-
-```ts
-{
-  provider: "command-code",
-  baseUrl: COMMAND_CODE_BASE_URL,
+  }),
+).toMatchObject({
   reasoning: false,
   input: ["text"],
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-  maxTokens: Math.min(contextWindow, 16_384),
-}
+  maxTokens: 16_384,
+});
 ```
 
-Set `api` from the Claude prefix rule and set OpenAI compatibility to `supportsStore: false`, `supportsDeveloperRole: false`, `supportsReasoningEffort: false`, `supportsUsageInStreaming: true`, `supportsStrictMode: false`, `supportsLongCacheRetention: false`, and `maxTokensField: "max_tokens"`.
+- [ ] **Step 3: Run the focused tests and confirm failure**
 
-- [ ] **Step 5: Run the conversion tests**
+Run `pnpm vitest run tests/providers/command-code.test.ts`. Expected: failure because the catalog module does not exist.
 
-Run `pnpm vitest run tests/providers/command-code.test.ts`. Expected: PASS for every snapshot record and representative defaults.
+- [ ] **Step 4: Implement deterministic Pi donor matching**
 
-- [ ] **Step 6: Commit the catalog slice**
+Import `getBuiltinProviders` and `getBuiltinModels` from `@earendil-works/pi-ai/providers/all`. Match exact model IDs first, then lowercase alphanumeric display names. Resolve duplicate donors by this fixed provider order, then lexical provider ID:
+
+```ts
+const PREFERRED_METADATA_PROVIDERS = [
+  "anthropic",
+  "openai",
+  "google",
+  "google-vertex",
+  "xai",
+  "deepseek",
+  "moonshotai",
+  "minimax",
+  "xiaomi",
+  "zai",
+  "qwen-token-plan",
+  "kimi-coding",
+  "together",
+  "groq",
+  "fireworks",
+  "nvidia",
+  "huggingface",
+  "openrouter",
+  "opencode",
+  "cloudflare-ai-gateway",
+  "github-copilot",
+];
+```
+
+Copy only `reasoning`, `input`, and `maxTokens`, clamping output to Command’s context. For Claude donors, copy `thinkingLevelMap` and Anthropic `forceAdaptiveThinking`; do not copy donor provider, endpoint, API, headers, pricing, sampling, or gateway compatibility. Keep zero costs for every Phase 1 model.
+
+- [ ] **Step 5: Implement conversion and export the baseline**
+
+Return complete models with Command’s `id`, `name`, `contextWindow`, `provider: "command-code"`, and `baseUrl: "https://api.commandcode.ai/provider/v1"`. Route IDs beginning with `claude-` to `anthropic-messages`; route all others to `openai-completions`. Use conservative OpenAI compatibility (`supportsStore: false`, `supportsDeveloperRole: false`, `supportsReasoningEffort: false`, `supportsUsageInStreaming: true`, `supportsStrictMode: false`, `supportsLongCacheRetention: false`, `maxTokensField: "max_tokens"`). Export `commandCodeModels = COMMAND_CODE_CATALOG.map(modelFromCatalogRecord)`.
+
+- [ ] **Step 6: Run and commit the catalog slice**
+
+Run `pnpm vitest run tests/providers/command-code.test.ts`. Expected: all snapshot, routing, donor, fallback, and zero-cost tests pass.
 
 ```bash
 git add src/providers/command-code/models.ts tests/providers/command-code.test.ts
 git commit -m "feat: add static Command Code catalog"
 ```
 
-### Task 3: Construct the native static provider
+### Task 2: Build the native static provider
 
-- [ ] **Step 1: Write provider construction tests**
+**Files:**
 
-Add tests that call `createCommandCodeProvider()` and assert its ID, name, base URL, static model list, and both API implementations. Stub `CMD_ZDR` before construction and assert the header is present only for the exact value `1`.
+- Create: `src/providers/command-code.ts`
+- Modify: `tests/providers/command-code.test.ts`
 
-- [ ] **Step 2: Confirm provider tests fail**
+- [ ] **Step 1: Write provider tests**
 
-Run `pnpm vitest run tests/providers/command-code.test.ts`. Expected: failure because `createCommandCodeProvider` is not defined.
+Assert provider ID/name/base URL, 52 static models, both API implementations, `envApiKeyAuth("Command Code API key", ["CMD_API_KEY"])`, no `refreshModels`, and a header only when `CMD_ZDR === "1"`.
 
-- [ ] **Step 3: Implement the provider**
+- [ ] **Step 2: Run tests and confirm failure**
 
-Import runtime symbols from `@earendil-works/pi-ai/compat` and construct:
+Run `pnpm vitest run tests/providers/command-code.test.ts`. Expected: failure because `createCommandCodeProvider` does not exist.
+
+- [ ] **Step 3: Implement the provider with stable Pi exports**
+
+Import `createProvider` and `envApiKeyAuth` from `@earendil-works/pi-ai`. Import `anthropicMessagesApi` from `@earendil-works/pi-ai/api/anthropic-messages.lazy` and `openAICompletionsApi` from `@earendil-works/pi-ai/api/openai-completions.lazy`. Construct:
 
 ```ts
-export function createCommandCodeProvider(): Provider {
+export function createCommandCodeProvider(): Provider<
+  "anthropic-messages" | "openai-completions"
+> {
   return createProvider({
     id: "command-code",
     name: "Command Code",
@@ -170,32 +161,34 @@ export function createCommandCodeProvider(): Provider {
 }
 ```
 
-Do not add `fetchModels` in this phase.
+- [ ] **Step 4: Run and commit the provider slice**
 
-- [ ] **Step 4: Run provider tests**
-
-Run `pnpm vitest run tests/providers/command-code.test.ts`. Expected: PASS with no network request required.
-
-- [ ] **Step 5: Commit the provider slice**
+Run `pnpm vitest run tests/providers/command-code.test.ts`. Expected: PASS without any network request.
 
 ```bash
 git add src/providers/command-code.ts tests/providers/command-code.test.ts
 git commit -m "feat: add static Command Code provider"
 ```
 
-### Task 4: Register, document, and verify the static phase
+### Task 3: Register, document, and verify
+
+**Files:**
+
+- Modify: `src/index.ts`
+- Modify: `tests/index.test.ts`
+- Modify: `package.json`, `README.md`, `CHANGELOG.md`
 
 - [ ] **Step 1: Update registration tests**
 
-Update `tests/index.test.ts` to assert four registrations in order: `minimax-openai`, `minimax-openai-cn`, `stepfun-ai`, and `command-code`. Assert the fourth item is a native provider with ID `command-code`.
+Assert registrations in order: `minimax-openai`, `minimax-openai-cn`, `stepfun-ai`, then a native provider with ID `command-code`. Assert the native provider exposes both API families.
 
 - [ ] **Step 2: Register the provider**
 
-Append `pi.registerProvider(createCommandCodeProvider());` to `createExtension` after the existing providers. Do not add a `session_start` listener.
+Append `pi.registerProvider(createCommandCodeProvider());` after `registerStepFun(pi)`. Do not add a startup listener or runtime catalog fetch.
 
-- [ ] **Step 3: Document the static phase**
+- [ ] **Step 3: Update package and user documentation**
 
-Add `CMD_API_KEY`, optional `CMD_ZDR=1`, provider ID, endpoint routing, and the bundled-catalog limitation to `README.md`. Add an Unreleased changelog entry for the static provider.
+Add Command Code to package description/keywords. Document `CMD_API_KEY`, optional `CMD_ZDR=1`, provider ID, Claude/OpenAI routing, the bundled snapshot limitation, Pi 0.84.1 requirement, and zero-cost/unknown-price behavior. Add an Unreleased changelog entry.
 
 - [ ] **Step 4: Run the phase gate**
 
@@ -206,20 +199,20 @@ pnpm vitest run tests/providers/command-code.test.ts tests/index.test.ts
 pnpm check
 ```
 
-Expected: all tests, lint, typecheck, formatting, and package verification pass.
+Expected: all tests, typecheck, formatting, lint, and package verification pass under Node 24.15+.
 
 - [ ] **Step 5: Commit the static phase**
 
 ```bash
-git add src/index.ts tests/index.test.ts README.md CHANGELOG.md
+git add src/index.ts tests/index.test.ts package.json README.md CHANGELOG.md
 git commit -m "feat: register static Command Code provider"
 ```
 
 ## Phase 1 acceptance criteria
 
-- A configured user can select any bundled Command Code model.
-- Claude requests dispatch to Anthropic Messages and other requests to OpenAI Completions.
-- `CMD_ZDR=1` adds `x-cmd-zdr: 1`; other values add no header.
-- No runtime catalog fetch occurs.
+- All 52 captured Command models are selectable offline.
+- Claude requests use Anthropic Messages; every other snapshot model uses OpenAI Chat Completions.
+- Known Pi/model-catalog reasoning, vision, and output-limit traits are preserved without donor routing or pricing.
+- `CMD_ZDR=1` adds `x-cmd-zdr: 1`; all other values add no header.
+- No runtime catalog request occurs.
 - `pnpm check` passes.
-
