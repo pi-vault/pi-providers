@@ -4,13 +4,13 @@
 
 **Parent plan:** [2026-08-08-command-code-provider.md](./2026-08-08-command-code-provider.md)
 
-**Previous phases:** [Phase 1 static provider](./2026-08-08-command-code-provider-phase-1-static-provider.md) and [Phase 2 metadata enrichment](./2026-08-08-command-code-provider-phase-2-metadata-enrichment.md)
+**Previous phases:** [Phase 1 static provider](./2026-08-08-command-code-provider-phase-1-static-provider.md) and [Phase 2 pricing enrichment](./2026-08-08-command-code-provider-phase-2-metadata-enrichment.md)
 
 **Goal:** Add validated live model discovery with Pi-managed persistence, restoration, freshness, and failure retention.
 
 **Prerequisite:** Phases 1 and 2 are complete and their phase gates pass.
 
-**Usable result:** The provider starts with the enriched bundled catalog, restores the last successful live overlay offline, checks the public catalog at most every four hours, and retains a valid previous catalog through all refresh failures.
+**Usable result:** The provider starts with the capability- and pricing-enriched bundled catalog, restores the last successful live overlay offline, checks the public catalog at most every four hours, and retains a valid previous catalog through all refresh failures.
 
 **Architecture:** Use `createProvider`’s native `fetchModels` lifecycle so Pi owns the provider-scoped model store and transactional publication. Add only a wrapper that skips fresh online phases; never write the store directly or refresh from `session_start`.
 
@@ -117,7 +117,7 @@ it("fetches stale and forced catalogs", async () => {
 
 - [ ] **Step 2: Implement `fetchModels` on the native provider**
 
-Pass `fetchModels: fetchCommandCodeModels` to the existing `createProvider` call. Keep all response conversion in the existing model module so static and live records use identical metadata and pricing rules.
+Pass `fetchModels: fetchCommandCodeModels` to the existing `createProvider` call. Keep all response conversion in the existing model module so static and live records use identical metadata and pricing rules. Apply the same conditional `CMD_ZDR` model headers to fetched models before returning them; `Provider.headers` is not transmitted by Pi 0.84.1. Once static and live catalogs are both call sites, extract the existing one-line model mapping into a shared local helper.
 
 - [ ] **Step 3: Wrap the generated refresh function**
 
@@ -143,6 +143,8 @@ The cache-only phase must always delegate so Pi restores persisted models. A fre
 - [ ] **Step 4: Verify failure retention**
 
 Assert that a failed stale or forced fetch returns a provider error while `models.getModel("command-code", cachedModel.id)` remains defined. Do not catch the error into a successful stale result; Pi’s provider lifecycle owns retention.
+
+Also assert that a refreshed model sends `x-cmd-zdr: 1` when the provider was created with `CMD_ZDR=1`, so live overlays cannot bypass the Phase 1 privacy control.
 
 - [ ] **Step 5: Run lifecycle tests**
 
@@ -195,4 +197,3 @@ With `CMD_API_KEY` configured, select one Claude and one non-Claude model and co
 - Stale and forced refreshes validate, persist, and publish complete model lists.
 - HTTP, parsing, validation, timeout, and cancellation failures never remove a valid catalog.
 - `pnpm check` passes and the parent plan is unchanged.
-
