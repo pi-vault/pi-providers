@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Static `command-code` provider with 52 bundled Command Code models, `CMD_API_KEY` authentication, Claude/Anthropic and OpenAI-compatible routing, and optional `CMD_ZDR=1` zero-data-retention requests.
 - Stable Command Code pricing metadata with permanent discounts, GPT-5.6 context tiers, post-promotion temporary-offer rates, and an intentionally unknown cost for capacity-limited Laguna access.
+- Command Code Phase 3 live model discovery with Pi-managed persistent overlays, four-hour freshness checks and offline restore, catalog validation, and retention of the prior catalog after refresh failures.
 
 ## [0.2.2] - 2026-08-05
 
