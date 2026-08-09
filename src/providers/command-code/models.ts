@@ -15,7 +15,7 @@ export interface CommandCodeCatalogRecord {
   contextWindow: number;
 }
 
-export type CommandCodeModel = Model<"anthropic-messages"> | Model<"openai-completions">;
+type CommandCodeModel = Model<"anthropic-messages"> | Model<"openai-completions">;
 
 const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 

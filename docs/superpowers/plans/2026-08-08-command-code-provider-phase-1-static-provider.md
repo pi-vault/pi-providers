@@ -152,9 +152,8 @@ export function createCommandCodeProvider(): Provider<
     id: "command-code",
     name: "Command Code",
     baseUrl: COMMAND_CODE_BASE_URL,
-    headers,
     auth: { apiKey: envApiKeyAuth("Command Code API key", ["CMD_API_KEY"]) },
-    // Pi API drivers transmit model headers; Provider.headers is metadata only in 0.84.1.
+    // Pi API drivers transmit model headers.
     models: headers ? commandCodeModels.map((model) => ({ ...model, headers })) : commandCodeModels,
     api: {
       "anthropic-messages": anthropicMessagesApi(),
@@ -164,7 +163,7 @@ export function createCommandCodeProvider(): Provider<
 }
 ```
 
-Use a stubbed transport test for each API family to assert the final request URL, authentication header, and `x-cmd-zdr` header. Inspecting `Provider.headers` alone does not prove the privacy header is transmitted.
+Use a stubbed transport test for each API family to assert the final request URL, authentication header, and `x-cmd-zdr` header. Do not set `Provider.headers`; Pi 0.84.1 does not transmit it.
 
 - [ ] **Step 4: Run and commit the provider slice**
 

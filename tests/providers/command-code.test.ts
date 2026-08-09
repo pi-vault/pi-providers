@@ -160,17 +160,21 @@ describe("Command Code catalog conversion", () => {
     expect(auth).toEqual({ auth: { apiKey: "test-key" }, source: "CMD_API_KEY" });
   });
 
-  it("adds the ZDR header only when CMD_ZDR is 1", () => {
+  it("adds model ZDR headers only when CMD_ZDR is 1", () => {
     const original = process.env.CMD_ZDR;
+    const modelsUseZdr = () =>
+      createCommandCodeProvider()
+        .getModels()
+        .every((model) => model.headers?.["x-cmd-zdr"] === "1");
     try {
       delete process.env.CMD_ZDR;
-      expect(createCommandCodeProvider().headers).toBeUndefined();
+      expect(modelsUseZdr()).toBe(false);
 
       process.env.CMD_ZDR = "true";
-      expect(createCommandCodeProvider().headers).toBeUndefined();
+      expect(modelsUseZdr()).toBe(false);
 
       process.env.CMD_ZDR = "1";
-      expect(createCommandCodeProvider().headers).toEqual({ "x-cmd-zdr": "1" });
+      expect(modelsUseZdr()).toBe(true);
     } finally {
       if (original === undefined) delete process.env.CMD_ZDR;
       else process.env.CMD_ZDR = original;
