@@ -308,9 +308,7 @@ describe("Command Code catalog conversion", () => {
 describe("Command Code registration", () => {
   it("registers the native Command Code provider", () => {
     const registerProvider = vi.fn();
-    const pi = { registerProvider } as unknown as Parameters<
-      typeof registerCommandCode
-    >[0];
+    const pi = { registerProvider } as unknown as Parameters<typeof registerCommandCode>[0];
 
     registerCommandCode(pi);
 

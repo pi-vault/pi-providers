@@ -6,6 +6,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { anthropicMessagesApi } from "@earendil-works/pi-ai/api/anthropic-messages.lazy";
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   COMMAND_CODE_BASE_URL,
   commandCodeModels,
@@ -109,4 +110,8 @@ export function createCommandCodeProvider(): Provider<"anthropic-messages" | "op
   };
 
   return provider;
+}
+
+export function registerCommandCode(pi: ExtensionAPI): void {
+  pi.registerProvider(createCommandCodeProvider());
 }
