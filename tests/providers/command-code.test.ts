@@ -4,7 +4,7 @@ import {
   InMemoryModelsStore,
   type Model,
 } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   COMMAND_CODE_CATALOG,
   commandCodeModels,
@@ -18,10 +18,7 @@ const validPayload = {
 };
 
 function jsonResponse(value: unknown, status = 200): Response {
-  return new Response(JSON.stringify(value), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
+  return new Response(JSON.stringify(value), { status });
 }
 
 function cachedLiveOnlyModel(): Model<"openai-completions"> {
@@ -48,7 +45,19 @@ async function createRefreshModels(modelsStore = new InMemoryModelsStore()) {
   return { models, modelsStore };
 }
 
-afterEach(() => vi.restoreAllMocks());
+async function createStoredRefreshModels(checkedAt = 0) {
+  const modelsStore = new InMemoryModelsStore();
+  const cached = cachedLiveOnlyModel();
+  await modelsStore.write("command-code", { models: [cached], checkedAt });
+  return { cached, ...(await createRefreshModels(modelsStore)) };
+}
+
+beforeEach(() => vi.stubEnv("CMD_ZDR", undefined));
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});
 
 async function captureRequest(modelId: string): Promise<Request> {
   const provider = createCommandCodeProvider();
@@ -263,45 +272,33 @@ describe("Command Code catalog conversion", () => {
   });
 
   it("adds model ZDR headers only when CMD_ZDR is 1", () => {
-    const original = process.env.CMD_ZDR;
     const modelsUseZdr = () => {
       const models = createCommandCodeProvider().getModels();
       expect(models).not.toHaveLength(0);
       return models.every((model) => model.headers?.["x-cmd-zdr"] === "1");
     };
-    try {
-      delete process.env.CMD_ZDR;
-      expect(modelsUseZdr()).toBe(false);
 
-      process.env.CMD_ZDR = "true";
-      expect(modelsUseZdr()).toBe(false);
+    expect(modelsUseZdr()).toBe(false);
 
-      process.env.CMD_ZDR = "1";
-      expect(modelsUseZdr()).toBe(true);
-    } finally {
-      if (original === undefined) delete process.env.CMD_ZDR;
-      else process.env.CMD_ZDR = original;
-    }
+    vi.stubEnv("CMD_ZDR", "true");
+    expect(modelsUseZdr()).toBe(false);
+
+    vi.stubEnv("CMD_ZDR", "1");
+    expect(modelsUseZdr()).toBe(true);
   });
 
   it("sends ZDR and authentication headers through both API families", async () => {
-    const original = process.env.CMD_ZDR;
-    process.env.CMD_ZDR = "1";
+    vi.stubEnv("CMD_ZDR", "1");
 
-    try {
-      const openAI = await captureRequest("deepseek/deepseek-v4-flash");
-      expect(openAI.url).toBe("https://api.commandcode.ai/provider/v1/chat/completions");
-      expect(openAI.headers.get("authorization")).toBe("Bearer test-key");
-      expect(openAI.headers.get("x-cmd-zdr")).toBe("1");
+    const openAI = await captureRequest("deepseek/deepseek-v4-flash");
+    expect(openAI.url).toBe("https://api.commandcode.ai/provider/v1/chat/completions");
+    expect(openAI.headers.get("authorization")).toBe("Bearer test-key");
+    expect(openAI.headers.get("x-cmd-zdr")).toBe("1");
 
-      const anthropic = await captureRequest("claude-sonnet-5");
-      expect(anthropic.url).toBe("https://api.commandcode.ai/provider/v1/messages");
-      expect(anthropic.headers.get("x-api-key")).toBe("test-key");
-      expect(anthropic.headers.get("x-cmd-zdr")).toBe("1");
-    } finally {
-      if (original === undefined) delete process.env.CMD_ZDR;
-      else process.env.CMD_ZDR = original;
-    }
+    const anthropic = await captureRequest("claude-sonnet-5");
+    expect(anthropic.url).toBe("https://api.commandcode.ai/provider/v1/messages");
+    expect(anthropic.headers.get("x-api-key")).toBe("test-key");
+    expect(anthropic.headers.get("x-cmd-zdr")).toBe("1");
   });
 });
 
@@ -359,11 +356,8 @@ describe("Command Code live catalog", () => {
   ];
 
   it.each(invalidCases)("retains the cached catalog for %s", async (_name, payload, status) => {
-    const modelsStore = new InMemoryModelsStore();
-    const cached = cachedLiveOnlyModel();
-    await modelsStore.write("command-code", { models: [cached], checkedAt: 0 });
     vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(payload, status));
-    const { models } = await createRefreshModels(modelsStore);
+    const { models, modelsStore, cached } = await createStoredRefreshModels();
 
     const result = await models.refresh({ providers: ["command-code"], force: true });
     const stored = await modelsStore.read("command-code");
@@ -374,13 +368,8 @@ describe("Command Code live catalog", () => {
   });
 
   it("retains the cached catalog for malformed JSON", async () => {
-    const modelsStore = new InMemoryModelsStore();
-    const cached = cachedLiveOnlyModel();
-    await modelsStore.write("command-code", { models: [cached], checkedAt: 0 });
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response("{", { status: 200, headers: { "content-type": "application/json" } }),
-    );
-    const { models } = await createRefreshModels(modelsStore);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{", { status: 200 }));
+    const { models, modelsStore, cached } = await createStoredRefreshModels();
 
     const result = await models.refresh({ providers: ["command-code"], force: true });
     const stored = await modelsStore.read("command-code");
@@ -391,11 +380,8 @@ describe("Command Code live catalog", () => {
   });
 
   it("restores the cached catalog offline without fetching", async () => {
-    const modelsStore = new InMemoryModelsStore();
-    const cached = cachedLiveOnlyModel();
-    await modelsStore.write("command-code", { models: [cached], checkedAt: Date.now() });
     const fetch = vi.spyOn(globalThis, "fetch");
-    const { models } = await createRefreshModels(modelsStore);
+    const { models, cached } = await createStoredRefreshModels(Date.now());
 
     await models.refresh({ providers: ["command-code"], allowNetwork: false });
 
@@ -404,25 +390,20 @@ describe("Command Code live catalog", () => {
   });
 
   it("skips a fresh non-forced online refresh without rewriting checkedAt", async () => {
-    const modelsStore = new InMemoryModelsStore();
-    const cached = cachedLiveOnlyModel();
-    const entry = { models: [cached], checkedAt: Date.now() };
-    await modelsStore.write("command-code", entry);
+    const checkedAt = Date.now();
     const fetch = vi.spyOn(globalThis, "fetch");
-    const { models } = await createRefreshModels(modelsStore);
+    const { models, modelsStore, cached } = await createStoredRefreshModels(checkedAt);
 
     await models.refresh({ providers: ["command-code"] });
 
     expect(fetch).not.toHaveBeenCalled();
     expect(models.getModel("command-code", cached.id)).toEqual(cached);
-    expect(await modelsStore.read("command-code")).toEqual(entry);
+    expect(await modelsStore.read("command-code")).toEqual({ models: [cached], checkedAt });
   });
 
   it("fetches and stores a stale non-forced catalog", async () => {
-    const modelsStore = new InMemoryModelsStore();
-    await modelsStore.write("command-code", { models: [cachedLiveOnlyModel()], checkedAt: 0 });
     const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(validPayload));
-    const { models } = await createRefreshModels(modelsStore);
+    const { models, modelsStore } = await createStoredRefreshModels();
 
     await models.refresh({ providers: ["command-code"] });
 
@@ -433,14 +414,27 @@ describe("Command Code live catalog", () => {
     );
   });
 
+  it("throttles non-forced retries after a failed catalog check", async () => {
+    const fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("down", { status: 503 }));
+    const { models, modelsStore, cached } = await createStoredRefreshModels();
+
+    const first = await models.refresh({ providers: ["command-code"] });
+
+    expect(first.errors.get("command-code")).toBeInstanceOf(Error);
+    expect((await modelsStore.read("command-code"))?.checkedAt).toBeGreaterThan(0);
+
+    const second = await models.refresh({ providers: ["command-code"] });
+
+    expect(second.errors.size).toBe(0);
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(models.getModel("command-code", cached.id)).toEqual(cached);
+  });
+
   it("fetches and stores a fresh catalog when forced", async () => {
-    const modelsStore = new InMemoryModelsStore();
-    await modelsStore.write("command-code", {
-      models: [cachedLiveOnlyModel()],
-      checkedAt: Date.now(),
-    });
     const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(validPayload));
-    const { models } = await createRefreshModels(modelsStore);
+    const { models, modelsStore } = await createStoredRefreshModels(Date.now());
 
     await models.refresh({ providers: ["command-code"], force: true });
 
@@ -457,15 +451,13 @@ describe("Command Code live catalog", () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(
       (_input, init) =>
         new Promise((_, reject) => {
+          init?.signal?.throwIfAborted();
           init?.signal?.addEventListener("abort", () => reject(new Error("timed out")), {
             once: true,
           });
         }),
     );
-    const modelsStore = new InMemoryModelsStore();
-    const cached = cachedLiveOnlyModel();
-    await modelsStore.write("command-code", { models: [cached], checkedAt: 0 });
-    const { models } = await createRefreshModels(modelsStore);
+    const { models, cached } = await createStoredRefreshModels();
 
     const refresh = models.refresh({ providers: ["command-code"], force: true });
     timeout.abort();
@@ -489,10 +481,7 @@ describe("Command Code live catalog", () => {
           });
         }),
     );
-    const modelsStore = new InMemoryModelsStore();
-    const cached = cachedLiveOnlyModel();
-    await modelsStore.write("command-code", { models: [cached], checkedAt: 0 });
-    const { models } = await createRefreshModels(modelsStore);
+    const { models, cached } = await createStoredRefreshModels();
     const caller = new AbortController();
 
     const refresh = models.refresh({ providers: ["command-code"], signal: caller.signal });
@@ -525,33 +514,26 @@ describe("Command Code live catalog", () => {
   });
 
   it("persists headerless models and applies ZDR only to each provider instance", async () => {
-    const original = process.env.CMD_ZDR;
-    try {
-      process.env.CMD_ZDR = "1";
-      vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(validPayload));
-      const modelsStore = new InMemoryModelsStore();
-      const first = await createRefreshModels(modelsStore);
+    vi.stubEnv("CMD_ZDR", "1");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(validPayload));
+    const modelsStore = new InMemoryModelsStore();
+    const first = await createRefreshModels(modelsStore);
 
-      await first.models.refresh({ providers: ["command-code"], force: true });
+    await first.models.refresh({ providers: ["command-code"], force: true });
 
-      const stored = await modelsStore.read("command-code");
-      expect(stored?.models).toEqual(
-        expect.arrayContaining([expect.objectContaining({ id: "new-model" })]),
-      );
-      expect(stored?.models.every((model) => model.headers === undefined)).toBe(true);
-      expect(first.models.getModel("command-code", "new-model")?.headers).toEqual({
-        "x-cmd-zdr": "1",
-      });
+    const stored = await modelsStore.read("command-code");
+    expect(stored?.models).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "new-model" })]),
+    );
+    expect(stored?.models.every((model) => model.headers === undefined)).toBe(true);
+    expect(first.models.getModel("command-code", "new-model")?.headers).toEqual({
+      "x-cmd-zdr": "1",
+    });
 
-      delete process.env.CMD_ZDR;
-      const second = await createRefreshModels(modelsStore);
-      await second.models.refresh({ providers: ["command-code"], allowNetwork: false });
+    vi.stubEnv("CMD_ZDR", undefined);
+    const second = await createRefreshModels(modelsStore);
+    await second.models.refresh({ providers: ["command-code"], allowNetwork: false });
 
-      expect(second.models.getModel("command-code", "new-model")?.headers).toBeUndefined();
-    } finally {
-      vi.restoreAllMocks();
-      if (original === undefined) delete process.env.CMD_ZDR;
-      else process.env.CMD_ZDR = original;
-    }
+    expect(second.models.getModel("command-code", "new-model")?.headers).toBeUndefined();
   });
 });

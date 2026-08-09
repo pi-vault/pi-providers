@@ -13,7 +13,6 @@ import {
   modelFromCatalogRecord,
 } from "./command-code/models.ts";
 
-const COMMAND_CODE_MODELS_URL = `${COMMAND_CODE_BASE_URL}/models`;
 const CATALOG_REFRESH_INTERVAL_MS = 4 * 60 * 60 * 1000;
 
 function parseCommandCodeModels(value: unknown) {
@@ -56,8 +55,7 @@ function parseCommandCodeModels(value: unknown) {
 
 async function fetchCommandCodeModels(context: RefreshModelsContext) {
   const signal = AbortSignal.any([context.signal, AbortSignal.timeout(10_000)]);
-  if (signal.aborted) throw new Error("Command Code model catalog request aborted");
-  const response = await fetch(COMMAND_CODE_MODELS_URL, { signal });
+  const response = await fetch(`${COMMAND_CODE_BASE_URL}/models`, { signal });
   if (!response.ok) {
     throw new Error(`Command Code model catalog request failed: ${response.status}`);
   }
@@ -82,10 +80,8 @@ export function createCommandCodeProvider(): Provider<"anthropic-messages" | "op
   });
 
   const generatedGetModels = provider.getModels;
-  provider.getModels = () => {
-    const models = generatedGetModels();
-    return headers ? models.map((model) => ({ ...model, headers })) : models;
-  };
+  provider.getModels = () =>
+    headers ? generatedGetModels().map((model) => ({ ...model, headers })) : generatedGetModels();
 
   const generatedRefresh = provider.refreshModels;
   provider.refreshModels = async (context) => {
@@ -97,7 +93,19 @@ export function createCommandCodeProvider(): Provider<"anthropic-messages" | "op
     ) {
       return;
     }
-    await generatedRefresh?.(context);
+    try {
+      await generatedRefresh?.(context);
+    } catch (error) {
+      if (context.allowNetwork && !context.signal.aborted) {
+        await context.publish({
+          persist: {
+            ...(context.stored ?? { models: [] }),
+            checkedAt: Date.now(),
+          },
+        });
+      }
+      throw error;
+    }
   };
 
   return provider;
