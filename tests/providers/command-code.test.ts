@@ -87,15 +87,73 @@ describe("Command Code catalog conversion", () => {
       ),
     ).toBe(true);
     expect(commandCodeModels).toHaveLength(52);
+
+    const laguna = commandCodeModels.find((model) => model.id === "poolside/laguna-s-2.1-free");
+    expect(laguna?.cost).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
     expect(
-      commandCodeModels.every(
-        (model) =>
-          model.cost.input === 0 &&
-          model.cost.output === 0 &&
-          model.cost.cacheRead === 0 &&
-          model.cost.cacheWrite === 0,
-      ),
+      commandCodeModels.every((model) => {
+        if (model.id === "poolside/laguna-s-2.1-free") return true;
+        return (
+          model.cost.input > 0 &&
+          model.cost.output > 0 &&
+          [model.cost.input, model.cost.output, model.cost.cacheRead, model.cost.cacheWrite].every(
+            (rate) => Number.isFinite(rate) && rate >= 0,
+          )
+        );
+      }),
     ).toBe(true);
+  });
+
+  it("uses Command’s stable and tiered pricing", () => {
+    const costFor = (id: string) =>
+      modelFromCatalogRecord({ id, name: id, contextWindow: 1_000_000 }).cost;
+
+    expect(costFor("deepseek/deepseek-v4-pro")).toEqual({
+      input: 0.435,
+      output: 0.87,
+      cacheRead: 0.003625,
+      cacheWrite: 0,
+    });
+    expect(costFor("MiniMaxAI/MiniMax-M3")).toEqual({
+      input: 0.3,
+      output: 1.2,
+      cacheRead: 0.06,
+      cacheWrite: 0,
+    });
+    expect(costFor("xiaomi/mimo-v2.5-pro")).toEqual({
+      input: 0.435,
+      output: 0.87,
+      cacheRead: 0.0036,
+      cacheWrite: 0,
+    });
+    expect(costFor("xiaomi/mimo-v2.5")).toEqual({
+      input: 0.14,
+      output: 0.28,
+      cacheRead: 0.0028,
+      cacheWrite: 0,
+    });
+    expect(costFor("claude-sonnet-5")).toEqual({
+      input: 3,
+      output: 15,
+      cacheRead: 0.3,
+      cacheWrite: 3.75,
+    });
+    expect(costFor("gpt-5.6-terra")).toEqual({
+      input: 2,
+      output: 12,
+      cacheRead: 0.2,
+      cacheWrite: 2.5,
+      tiers: [{ inputTokensAbove: 272_000, input: 4, output: 18, cacheRead: 0.4, cacheWrite: 5 }],
+    });
+    expect(costFor("gpt-5.6-luna")).toEqual({
+      input: 0.2,
+      output: 1.2,
+      cacheRead: 0.02,
+      cacheWrite: 0.25,
+      tiers: [
+        { inputTokensAbove: 272_000, input: 0.4, output: 1.8, cacheRead: 0.04, cacheWrite: 0.5 },
+      ],
+    });
   });
 
   it("uses Pi metadata while preserving Command identity and context", () => {
@@ -111,7 +169,7 @@ describe("Command Code catalog conversion", () => {
       reasoning: true,
       input: ["text", "image"],
       maxTokens: 128_000,
-      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
       thinkingLevelMap: { xhigh: "xhigh", max: "max" },
       compat: { forceAdaptiveThinking: true },
     });
