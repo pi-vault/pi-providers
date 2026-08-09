@@ -10,7 +10,10 @@ import {
   commandCodeModels,
   modelFromCatalogRecord,
 } from "../../src/providers/command-code/models.ts";
-import { createCommandCodeProvider } from "../../src/providers/command-code.ts";
+import {
+  createCommandCodeProvider,
+  registerCommandCode,
+} from "../../src/providers/command-code.ts";
 
 const validPayload = {
   object: "list",
@@ -299,6 +302,22 @@ describe("Command Code catalog conversion", () => {
     expect(anthropic.url).toBe("https://api.commandcode.ai/provider/v1/messages");
     expect(anthropic.headers.get("x-api-key")).toBe("test-key");
     expect(anthropic.headers.get("x-cmd-zdr")).toBe("1");
+  });
+});
+
+describe("Command Code registration", () => {
+  it("registers the native Command Code provider", () => {
+    const registerProvider = vi.fn();
+    const pi = { registerProvider } as unknown as Parameters<
+      typeof registerCommandCode
+    >[0];
+
+    registerCommandCode(pi);
+
+    expect(registerProvider).toHaveBeenCalledOnce();
+    expect(registerProvider.mock.calls[0]?.[0]).toMatchObject({
+      id: "command-code",
+    });
   });
 });
 
