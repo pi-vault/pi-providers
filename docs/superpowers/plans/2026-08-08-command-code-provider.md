@@ -14,11 +14,11 @@
 
 ## Phase map
 
-| Phase                                                                        | Scope                                                                           | Runtime catalog network | Pricing       |
-| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | ----------------------- | ------------- |
-| [Phase 1](./2026-08-08-command-code-provider-phase-1-static-provider.md)     | Native provider, 52-model snapshot, Pi-derived capabilities, mixed routing, ZDR | None                    | Zero/unknown  |
-| [Phase 2](./2026-08-08-command-code-provider-phase-2-metadata-enrichment.md) | Official Command cost snapshot                                                  | None                    | Command rates |
-| [Phase 3](./2026-08-08-command-code-provider-phase-3-live-catalog.md)        | Validated live overlay, Pi persistence, four-hour freshness                     | Yes                     | Phase 2 rates |
+| Phase                                                                        | Scope                                                                             | Runtime catalog network | Pricing       |
+| ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------- | ----------------------- | ------------- |
+| [Phase 1](./2026-08-08-command-code-provider-phase-1-static-provider.md)     | Native provider, 52-model snapshot, Pi-derived capabilities, mixed routing, ZDR   | None                    | Zero/unknown  |
+| [Phase 2](./2026-08-08-command-code-provider-phase-2-metadata-enrichment.md) | Stable exact-ID Command cost snapshot, permanent discounts, and GPT context tiers | None                    | Command rates |
+| [Phase 3](./2026-08-08-command-code-provider-phase-3-live-catalog.md)        | Validated live overlay, Pi persistence, four-hour freshness                       | Yes                     | Phase 2 rates |
 
 ## Shared invariants
 
@@ -26,6 +26,7 @@
 - IDs beginning with `claude-` use `anthropic-messages`; every other ID uses `openai-completions`.
 - `CMD_API_KEY` is resolved with Pi’s `envApiKeyAuth`; `CMD_ZDR=1` adds `x-cmd-zdr: 1` to model headers so Pi’s API drivers transmit it.
 - Command supplies model ID, display name, and context window. Donor catalogs never supply routing, endpoints, headers, or provider identity.
+- Phase 2 pricing is a dated offline estimate: temporary promotions use documented post-promotion rates, GPT-5.6 Terra/Luna use Pi-native tiers above 272K input tokens, and capacity-limited free offers remain unknown.
 - Phase 1 and Phase 2 remain offline-capable. Phase 3 delegates restoration, publication, persistence, and failure retention to Pi’s native provider lifecycle.
 - No new runtime dependency is added. Pi development dependencies are already at `^0.84.1`; wildcard peer dependencies remain unchanged for extension compatibility.
 
