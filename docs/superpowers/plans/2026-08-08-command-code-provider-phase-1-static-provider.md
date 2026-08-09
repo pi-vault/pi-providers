@@ -112,7 +112,7 @@ Copy only `reasoning`, `input`, and `maxTokens`, clamping output to Command’s 
 
 - [ ] **Step 5: Implement conversion and export the baseline**
 
-Return complete models with Command’s `id`, `name`, `contextWindow`, `provider: "command-code"`, and `baseUrl: "https://api.commandcode.ai/provider/v1"`. Route IDs beginning with `claude-` to `anthropic-messages`; route all others to `openai-completions`. Use conservative OpenAI compatibility (`supportsStore: false`, `supportsDeveloperRole: false`, `supportsReasoningEffort: false`, `supportsUsageInStreaming: true`, `supportsStrictMode: false`, `supportsLongCacheRetention: false`, `maxTokensField: "max_tokens"`). Export `commandCodeModels = COMMAND_CODE_CATALOG.map(modelFromCatalogRecord)`.
+Return complete models with Command’s `id`, `name`, `contextWindow`, and `provider: "command-code"`. OpenAI models use `baseUrl: "https://api.commandcode.ai/provider/v1"`. Claude models use `baseUrl: "https://api.commandcode.ai/provider"` because Pi’s Anthropic SDK appends `/v1/messages`; the resulting request still targets Command’s documented `/provider/v1/messages` endpoint. Route IDs beginning with `claude-` to `anthropic-messages`; route all others to `openai-completions`. Use conservative OpenAI compatibility (`supportsStore: false`, `supportsDeveloperRole: false`, `supportsReasoningEffort: false`, `supportsUsageInStreaming: true`, `supportsStrictMode: false`, `supportsLongCacheRetention: false`, `maxTokensField: "max_tokens"`). Export `commandCodeModels = COMMAND_CODE_CATALOG.map(modelFromCatalogRecord)`.
 
 - [ ] **Step 6: Run and commit the catalog slice**
 
@@ -146,13 +146,16 @@ Import `createProvider` and `envApiKeyAuth` from `@earendil-works/pi-ai`. Import
 export function createCommandCodeProvider(): Provider<
   "anthropic-messages" | "openai-completions"
 > {
+  const headers = process.env.CMD_ZDR === "1" ? { "x-cmd-zdr": "1" } : undefined;
+
   return createProvider({
     id: "command-code",
     name: "Command Code",
     baseUrl: COMMAND_CODE_BASE_URL,
-    headers: process.env.CMD_ZDR === "1" ? { "x-cmd-zdr": "1" } : undefined,
+    headers,
     auth: { apiKey: envApiKeyAuth("Command Code API key", ["CMD_API_KEY"]) },
-    models: commandCodeModels,
+    // Pi API drivers transmit model headers; Provider.headers is metadata only in 0.84.1.
+    models: headers ? commandCodeModels.map((model) => ({ ...model, headers })) : commandCodeModels,
     api: {
       "anthropic-messages": anthropicMessagesApi(),
       "openai-completions": openAICompletionsApi(),
@@ -160,6 +163,8 @@ export function createCommandCodeProvider(): Provider<
   });
 }
 ```
+
+Use a stubbed transport test for each API family to assert the final request URL, authentication header, and `x-cmd-zdr` header. Inspecting `Provider.headers` alone does not prove the privacy header is transmitted.
 
 - [ ] **Step 4: Run and commit the provider slice**
 

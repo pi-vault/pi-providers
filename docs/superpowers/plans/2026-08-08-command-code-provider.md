@@ -22,9 +22,9 @@
 
 ## Shared invariants
 
-- Provider ID is `command-code`; base URL is `https://api.commandcode.ai/provider/v1`.
+- Provider ID is `command-code`; its public/OpenAI base URL is `https://api.commandcode.ai/provider/v1`. Claude model records use `https://api.commandcode.ai/provider` so Pi’s Anthropic SDK appends the correct `/v1/messages` path.
 - IDs beginning with `claude-` use `anthropic-messages`; every other ID uses `openai-completions`.
-- `CMD_API_KEY` is resolved with Pi’s `envApiKeyAuth`; `CMD_ZDR=1` adds `x-cmd-zdr: 1`.
+- `CMD_API_KEY` is resolved with Pi’s `envApiKeyAuth`; `CMD_ZDR=1` adds `x-cmd-zdr: 1` to model headers so Pi’s API drivers transmit it.
 - Command supplies model ID, display name, and context window. Donor catalogs never supply routing, endpoints, headers, or provider identity.
 - Phase 1 and Phase 2 remain offline-capable. Phase 3 delegates restoration, publication, persistence, and failure retention to Pi’s native provider lifecycle.
 - No new runtime dependency is added. Pi development dependencies are already at `^0.84.1`; wildcard peer dependencies remain unchanged for extension compatibility.

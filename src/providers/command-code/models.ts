@@ -7,6 +7,7 @@ import type {
 import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 
 export const COMMAND_CODE_BASE_URL = "https://api.commandcode.ai/provider/v1";
+const COMMAND_CODE_ANTHROPIC_BASE_URL = "https://api.commandcode.ai/provider";
 
 export interface CommandCodeCatalogRecord {
   id: string;
@@ -84,7 +85,9 @@ export function modelFromCatalogRecord(record: CommandCodeCatalogRecord): Comman
     id: record.id,
     name: record.name,
     provider: "command-code",
-    baseUrl: COMMAND_CODE_BASE_URL,
+    baseUrl: record.id.startsWith("claude-")
+      ? COMMAND_CODE_ANTHROPIC_BASE_URL
+      : COMMAND_CODE_BASE_URL,
     reasoning: donor?.reasoning ?? false,
     input: donor ? [...donor.input] : (["text"] as ("text" | "image")[]),
     cost: ZERO_COST,

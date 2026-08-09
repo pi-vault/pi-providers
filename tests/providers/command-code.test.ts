@@ -6,6 +6,32 @@ import {
 } from "../../src/providers/command-code/models.ts";
 import { createCommandCodeProvider } from "../../src/providers/command-code.ts";
 
+async function captureRequest(modelId: string): Promise<Request> {
+  const provider = createCommandCodeProvider();
+  const model = provider.getModels().find((candidate) => candidate.id === modelId);
+  if (!model) throw new Error(`Missing test model: ${modelId}`);
+
+  let captured: Request | undefined;
+  const fetch: typeof globalThis.fetch = async (input, init) => {
+    captured = new Request(input, init);
+    return new Response(
+      JSON.stringify({ error: { type: "invalid_request_error", message: "test stop" } }),
+      { status: 400, headers: { "content-type": "application/json" } },
+    );
+  };
+
+  await provider
+    .stream(
+      model,
+      { messages: [{ role: "user", content: "hello", timestamp: Date.now() }] },
+      { apiKey: "test-key", fetch, maxRetries: 0 },
+    )
+    .result();
+
+  if (!captured) throw new Error(`No request captured for: ${modelId}`);
+  return captured;
+}
+
 describe("Command Code catalog conversion", () => {
   it("routes Claude records to Anthropic Messages", () => {
     expect(
@@ -50,6 +76,16 @@ describe("Command Code catalog conversion", () => {
   it("bundles the captured Command Code catalog", () => {
     expect(COMMAND_CODE_CATALOG).toHaveLength(52);
     expect(new Set(COMMAND_CODE_CATALOG.map((model) => model.id)).size).toBe(52);
+    expect(new Set(COMMAND_CODE_CATALOG.map((model) => model.name)).size).toBe(52);
+    expect(
+      COMMAND_CODE_CATALOG.every(
+        (model) =>
+          model.id.trim().length > 0 &&
+          model.name.trim().length > 0 &&
+          Number.isInteger(model.contextWindow) &&
+          model.contextWindow > 0,
+      ),
+    ).toBe(true);
     expect(commandCodeModels).toHaveLength(52);
     expect(
       commandCodeModels.every(
@@ -126,13 +162,38 @@ describe("Command Code catalog conversion", () => {
 
   it("adds the ZDR header only when CMD_ZDR is 1", () => {
     const original = process.env.CMD_ZDR;
-    delete process.env.CMD_ZDR;
-    expect(createCommandCodeProvider().headers).toBeUndefined();
+    try {
+      delete process.env.CMD_ZDR;
+      expect(createCommandCodeProvider().headers).toBeUndefined();
 
+      process.env.CMD_ZDR = "true";
+      expect(createCommandCodeProvider().headers).toBeUndefined();
+
+      process.env.CMD_ZDR = "1";
+      expect(createCommandCodeProvider().headers).toEqual({ "x-cmd-zdr": "1" });
+    } finally {
+      if (original === undefined) delete process.env.CMD_ZDR;
+      else process.env.CMD_ZDR = original;
+    }
+  });
+
+  it("sends ZDR and authentication headers through both API families", async () => {
+    const original = process.env.CMD_ZDR;
     process.env.CMD_ZDR = "1";
-    expect(createCommandCodeProvider().headers).toEqual({ "x-cmd-zdr": "1" });
 
-    if (original === undefined) delete process.env.CMD_ZDR;
-    else process.env.CMD_ZDR = original;
+    try {
+      const openAI = await captureRequest("deepseek/deepseek-v4-flash");
+      expect(openAI.url).toBe("https://api.commandcode.ai/provider/v1/chat/completions");
+      expect(openAI.headers.get("authorization")).toBe("Bearer test-key");
+      expect(openAI.headers.get("x-cmd-zdr")).toBe("1");
+
+      const anthropic = await captureRequest("claude-sonnet-5");
+      expect(anthropic.url).toBe("https://api.commandcode.ai/provider/v1/messages");
+      expect(anthropic.headers.get("x-api-key")).toBe("test-key");
+      expect(anthropic.headers.get("x-cmd-zdr")).toBe("1");
+    } finally {
+      if (original === undefined) delete process.env.CMD_ZDR;
+      else process.env.CMD_ZDR = original;
+    }
   });
 });
