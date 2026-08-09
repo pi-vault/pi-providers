@@ -34,16 +34,13 @@ The public factory remains createCommandCodeProvider(): Provider<"anthropic-mess
 
 - [ ] **Step 1: Add reusable test setup for Pi models refresh.**
 
-Import createModels, InMemoryCredentialStore, and InMemoryModelsStore from @earendil-works/pi-ai, and import afterEach and vi from Vitest. Store the Command credential through InMemoryCredentialStore.modify("command-code", async () => ({ type: "api_key", key: "test-key" })) so Pi performs the network phase. Use a cached live-only model with provider: "command-code", api: "openai-completions", Command’s base URL, text input, zero cost, positive context window, and maxTokens below that context window.
+Import createModels, InMemoryCredentialStore, and InMemoryModelsStore from @earendil-works/pi-ai, and import afterEach, beforeEach, and vi from Vitest. Store the Command credential through InMemoryCredentialStore.modify("command-code", async () => ({ type: "api_key", key: "test-key" })) so Pi performs the network phase. Use a cached live-only model with provider: "command-code", api: "openai-completions", Command’s base URL, text input, zero cost, positive context window, and maxTokens below that context window. Isolate CMD_ZDR with vi.stubEnv and vi.unstubAllEnvs.
 
 Define this response helper in the test file:
 
 ```
 function jsonResponse(value: unknown, status = 200): Response {
-  return new Response(JSON.stringify(value), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
+  return new Response(JSON.stringify(value), { status });
 }
 
 const validPayload = {
@@ -81,12 +78,13 @@ Add a separate malformed-JSON case whose mocked Response body is "{" and whose s
 
 - [ ] **Step 4: Add independent freshness tests.**
 
-Cover all four branches with separate tests:
+Cover all five branches with separate tests:
 
 1. allowNetwork: false restores the cached model and does not call fetch.
 2. A checkedAt of Date.now() skips a non-forced online fetch and leaves checkedAt byte-for-byte unchanged.
 3. A checkedAt of 0 performs a non-forced fetch and stores the new catalog.
 4. A fresh checkedAt plus force: true performs a fetch and stores the new catalog.
+5. A failed stale check retains the cached catalog, advances checkedAt, and suppresses another non-forced request within four hours.
 
 - [ ] **Step 5: Add timeout and caller-cancellation tests.**
 
@@ -98,7 +96,7 @@ For caller cancellation, mock a fetch that remains pending until its signal abor
 
 Return a first live response containing new-model, then a forced second response containing only another valid model. Assert new-model disappears while a bundled model remains available, proving live-only removal without deleting the permanent baseline.
 
-For ZDR, create a provider with CMD_ZDR=1, refresh a live catalog, assert the stored live model has no headers property while models.getModel("command-code", "new-model")?.headers contains { "x-cmd-zdr": "1" }. Create a second provider after clearing CMD_ZDR, restore from the same store with allowNetwork: false, and assert the restored model has no ZDR header. Restore the original environment in afterEach.
+For ZDR, create a provider with CMD_ZDR=1, refresh a live catalog, assert the stored live model has no headers property while models.getModel("command-code", "new-model")?.headers contains { "x-cmd-zdr": "1" }. Create a second provider after clearing CMD_ZDR, restore from the same store with allowNetwork: false, and assert the restored model has no ZDR header.
 
 - [ ] **Step 7: Run the new tests and confirm they fail.**
 
@@ -118,10 +116,9 @@ Expected: the new refresh tests fail because Phase 2 has no fetchModels implemen
 
 - [ ] **Step 1: Add the endpoint, interval, and private fetcher types.**
 
-Add these constants below the existing imports:
+Add the refresh interval below the existing imports:
 
 ```ts
-const COMMAND_CODE_MODELS_URL = `${COMMAND_CODE_BASE_URL}/models`;
 const CATALOG_REFRESH_INTERVAL_MS = 4 * 60 * 60 * 1000;
 ```
 
@@ -145,7 +142,7 @@ Add:
 ```ts
 async function fetchCommandCodeModels(context: RefreshModelsContext) {
   const signal = AbortSignal.any([context.signal, AbortSignal.timeout(10_000)]);
-  const response = await fetch(COMMAND_CODE_MODELS_URL, { signal });
+  const response = await fetch(`${COMMAND_CODE_BASE_URL}/models`, { signal });
   if (!response.ok) {
     throw new Error(
       `Command Code model catalog request failed: ${response.status}`,
@@ -178,10 +175,10 @@ After createProvider returns, capture its generated getter and replace it with a
 
 ```ts
 const generatedGetModels = provider.getModels;
-provider.getModels = () => {
-  const models = generatedGetModels();
-  return headers ? models.map((model) => ({ ...model, headers })) : models;
-};
+provider.getModels = () =>
+  headers
+    ? generatedGetModels().map((model) => ({ ...model, headers }))
+    : generatedGetModels();
 ```
 
 The generated refresh closure must continue to see its own internal headerless baseline and dynamic state.
@@ -201,11 +198,23 @@ provider.refreshModels = async (context) => {
   ) {
     return;
   }
-  await generatedRefresh?.(context);
+  try {
+    await generatedRefresh?.(context);
+  } catch (error) {
+    if (context.allowNetwork && !context.signal.aborted) {
+      await context.publish({
+        persist: {
+          ...(context.stored ?? { models: [] }),
+          checkedAt: Date.now(),
+        },
+      });
+    }
+    throw error;
+  }
 };
 ```
 
-Offline phases always delegate, allowing Pi to restore stored overlays. Fresh online phases return before publication, so checkedAt is not rewritten. Stale and forced phases delegate and let failures reject into Pi’s errors map.
+Offline phases always delegate, allowing Pi to restore stored overlays. Fresh online phases return before publication, so checkedAt is not rewritten. Stale and forced phases delegate. Non-cancellation failures retain the stored overlay, record the check time to preserve the four-hour request limit, and still reject into Pi’s errors map.
 
 - [ ] **Step 4: Run the complete provider test file.**
 
@@ -267,6 +276,7 @@ With CMD_API_KEY configured, refresh the catalog and stream one Claude model and
 
 - Offline refresh restores the last successful live overlay.
 - Fresh non-forced refreshes issue no request and do not rewrite checkedAt.
+- Failed non-cancelled checks retain the prior overlay and suppress non-forced retries for four hours.
 - Stale and forced refreshes validate, publish, and persist complete live overlays.
 - Invalid HTTP, JSON, schema, timeout, and cancellation outcomes never remove a valid prior catalog.
 - Live-only models removed by a later successful response disappear; bundled baseline models remain available.
