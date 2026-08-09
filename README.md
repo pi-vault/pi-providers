@@ -58,7 +58,7 @@ Ask Pi normally; there is no provider-specific prompt syntax. Image input works 
 | `stepfun-ai`                           | `step-3.7-flash`            | text, image | low / medium / high       | 256,000   | 256,000    | $0.20 / $1.15                | $0.04      |
 | `stepfun-ai`                           | `step-3.5-flash-2603`       | text        | low / high                | 256,000   | 256,000    | $0.10 / $0.30                | $0.02      |
 | `stepfun-ai`                           | `step-3.5-flash`            | text        | automatic (shown as high) | 256,000   | 256,000    | $0.10 / $0.30                | $0.02      |
-| `command-code`                         | 52 bundled snapshot models  | varies      | varies                    | varies    | varies     | unknown                      | unknown    |
+| `command-code`                         | 52 bundled snapshot models  | varies      | varies                    | varies    | varies     | dated snapshot               | varies     |
 
 API bases:
 
@@ -74,7 +74,7 @@ Cache writes are free for `MiniMax-M3`. They cost $0.375 per 1M tokens for `Mini
 - **Key matching.** The provider code passes the corresponding environment-variable reference (`$MINIMAX_API_KEY`, `$MINIMAX_CN_API_KEY`, `$STEP_API_KEY`) to Pi. If the variable is unset, the provider cannot authenticate.
 - **MiniMax tool-call hardening.** The `minimax-openai` and `minimax-openai-cn` providers wrap their streams with a MiniMax-specific pipeline that folds inline `think` blocks into a proper `thinking` content block, repairs empty `{}` tool-call arguments via second-chance JSON parse, reorders tool-result messages to match the order of preceding `tool_use` blocks (the MiniMax API rejects mismatched ordering), and fails closed with a retryable error if the upstream ever emits internal tool-call markup instead of proper OpenAI tool calls.
 - **StepFun native stream.** StepFun uses Pi's built-in OpenAI-compatible driver directly, without the MiniMax hardening pipeline.
-- **Command Code snapshot.** Its catalog is captured at build time; installing this package does not fetch models. Claude IDs use Anthropic Messages, and all other IDs use OpenAI Chat Completions. Prices are shown as zero because Command-specific pricing is not yet bundled.
+- **Command Code snapshot.** Its catalog and pricing are captured at build time; installing this package does not fetch models. Claude IDs use Anthropic Messages, and all other IDs use OpenAI Chat Completions. Prices are USD per 1M tokens and include permanent Command discounts. Temporary GPT/Claude promotions use their documented post-promotion rates; the capacity-limited free Laguna offer remains unknown. Open-model routing and `CMD_ZDR=1` can change the upstream and actual charge.
 - **Deeply nested tool schemas.** The MiniMax API may produce collapsed nested arguments on complex JSON schemas; this has been observed with `MiniMax-M3`. The package emits a diagnostic message instead of retrying.
 
 ## Development And Verification
