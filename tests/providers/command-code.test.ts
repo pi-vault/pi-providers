@@ -1,10 +1,54 @@
-import { describe, expect, it } from "vitest";
+import {
+  createModels,
+  InMemoryCredentialStore,
+  InMemoryModelsStore,
+  type Model,
+} from "@earendil-works/pi-ai";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   COMMAND_CODE_CATALOG,
   commandCodeModels,
   modelFromCatalogRecord,
 } from "../../src/providers/command-code/models.ts";
 import { createCommandCodeProvider } from "../../src/providers/command-code.ts";
+
+const validPayload = {
+  object: "list",
+  data: [{ id: "new-model", name: "New Model", context_length: 32_000 }],
+};
+
+function jsonResponse(value: unknown, status = 200): Response {
+  return new Response(JSON.stringify(value), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+function cachedLiveOnlyModel(): Model<"openai-completions"> {
+  return {
+    id: "cached-live-only",
+    name: "Cached Live Only",
+    api: "openai-completions",
+    provider: "command-code",
+    baseUrl: "https://api.commandcode.ai/provider/v1",
+    reasoning: false,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 32_000,
+    maxTokens: 16_384,
+  };
+}
+
+async function createRefreshModels(modelsStore = new InMemoryModelsStore()) {
+  const credentials = new InMemoryCredentialStore();
+  await credentials.modify("command-code", async () => ({ type: "api_key", key: "test-key" }));
+
+  const models = createModels({ credentials, modelsStore });
+  models.setProvider(createCommandCodeProvider());
+  return { models, modelsStore };
+}
+
+afterEach(() => vi.restoreAllMocks());
 
 async function captureRequest(modelId: string): Promise<Request> {
   const provider = createCommandCodeProvider();
@@ -189,7 +233,7 @@ describe("Command Code catalog conversion", () => {
     });
   });
 
-  it("creates a static provider with both API families", () => {
+  it("creates a provider with both API families", () => {
     const provider = createCommandCodeProvider();
 
     expect(provider).toMatchObject({
@@ -201,7 +245,7 @@ describe("Command Code catalog conversion", () => {
     expect(new Set(provider.getModels().map((model) => model.api))).toEqual(
       new Set(["anthropic-messages", "openai-completions"]),
     );
-    expect(provider.refreshModels).toBeUndefined();
+    expect(provider.refreshModels).toBeTypeOf("function");
     expect(provider.auth.apiKey?.name).toBe("Command Code API key");
   });
 
@@ -220,10 +264,11 @@ describe("Command Code catalog conversion", () => {
 
   it("adds model ZDR headers only when CMD_ZDR is 1", () => {
     const original = process.env.CMD_ZDR;
-    const modelsUseZdr = () =>
-      createCommandCodeProvider()
-        .getModels()
-        .every((model) => model.headers?.["x-cmd-zdr"] === "1");
+    const modelsUseZdr = () => {
+      const models = createCommandCodeProvider().getModels();
+      expect(models).not.toHaveLength(0);
+      return models.every((model) => model.headers?.["x-cmd-zdr"] === "1");
+    };
     try {
       delete process.env.CMD_ZDR;
       expect(modelsUseZdr()).toBe(false);
@@ -254,6 +299,257 @@ describe("Command Code catalog conversion", () => {
       expect(anthropic.headers.get("x-api-key")).toBe("test-key");
       expect(anthropic.headers.get("x-cmd-zdr")).toBe("1");
     } finally {
+      if (original === undefined) delete process.env.CMD_ZDR;
+      else process.env.CMD_ZDR = original;
+    }
+  });
+});
+
+describe("Command Code live catalog", () => {
+  it("converts and persists a valid forced refresh", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(validPayload));
+    const { models, modelsStore } = await createRefreshModels();
+
+    const result = await models.refresh({ providers: ["command-code"], force: true });
+    const model = models.getModel("command-code", "new-model");
+    const stored = await modelsStore.read("command-code");
+
+    expect(result.errors.size).toBe(0);
+    expect(model).toMatchObject({
+      id: "new-model",
+      name: "New Model",
+      provider: "command-code",
+      contextWindow: 32_000,
+      api: "openai-completions",
+    });
+    expect(stored?.models).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "new-model" })]),
+    );
+    expect(stored?.checkedAt).toEqual(expect.any(Number));
+  });
+
+  const invalidCases: Array<[name: string, payload: unknown, status?: number]> = [
+    ["empty list", { object: "list", data: [] }],
+    [
+      "duplicate IDs",
+      {
+        object: "list",
+        data: [
+          { id: "same", name: "One", context_length: 1000 },
+          { id: "same", name: "Two", context_length: 1000 },
+        ],
+      },
+    ],
+    ["blank ID", { object: "list", data: [{ id: "   ", name: "Name", context_length: 1000 }] }],
+    ["blank name", { object: "list", data: [{ id: "id", name: "\t", context_length: 1000 }] }],
+    ["zero context", { object: "list", data: [{ id: "id", name: "Name", context_length: 0 }] }],
+    [
+      "negative context",
+      { object: "list", data: [{ id: "id", name: "Name", context_length: -1 }] },
+    ],
+    [
+      "fractional context",
+      { object: "list", data: [{ id: "id", name: "Name", context_length: 1.5 }] },
+    ],
+    [
+      "wrong object",
+      { object: "models", data: [{ id: "id", name: "Name", context_length: 1000 }] },
+    ],
+    ["non-2xx", { error: "rate limited" }, 429],
+  ];
+
+  it.each(invalidCases)("retains the cached catalog for %s", async (_name, payload, status) => {
+    const modelsStore = new InMemoryModelsStore();
+    const cached = cachedLiveOnlyModel();
+    await modelsStore.write("command-code", { models: [cached], checkedAt: 0 });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(payload, status));
+    const { models } = await createRefreshModels(modelsStore);
+
+    const result = await models.refresh({ providers: ["command-code"], force: true });
+    const stored = await modelsStore.read("command-code");
+
+    expect(result.errors.get("command-code")).toBeInstanceOf(Error);
+    expect(models.getModel("command-code", cached.id)).toEqual(cached);
+    expect(stored?.models).toEqual([cached]);
+  });
+
+  it("retains the cached catalog for malformed JSON", async () => {
+    const modelsStore = new InMemoryModelsStore();
+    const cached = cachedLiveOnlyModel();
+    await modelsStore.write("command-code", { models: [cached], checkedAt: 0 });
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("{", { status: 200, headers: { "content-type": "application/json" } }),
+    );
+    const { models } = await createRefreshModels(modelsStore);
+
+    const result = await models.refresh({ providers: ["command-code"], force: true });
+    const stored = await modelsStore.read("command-code");
+
+    expect(result.errors.get("command-code")).toBeInstanceOf(Error);
+    expect(models.getModel("command-code", cached.id)).toEqual(cached);
+    expect(stored?.models).toEqual([cached]);
+  });
+
+  it("restores the cached catalog offline without fetching", async () => {
+    const modelsStore = new InMemoryModelsStore();
+    const cached = cachedLiveOnlyModel();
+    await modelsStore.write("command-code", { models: [cached], checkedAt: Date.now() });
+    const fetch = vi.spyOn(globalThis, "fetch");
+    const { models } = await createRefreshModels(modelsStore);
+
+    await models.refresh({ providers: ["command-code"], allowNetwork: false });
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(models.getModel("command-code", cached.id)).toEqual(cached);
+  });
+
+  it("skips a fresh non-forced online refresh without rewriting checkedAt", async () => {
+    const modelsStore = new InMemoryModelsStore();
+    const cached = cachedLiveOnlyModel();
+    const entry = { models: [cached], checkedAt: Date.now() };
+    await modelsStore.write("command-code", entry);
+    const fetch = vi.spyOn(globalThis, "fetch");
+    const { models } = await createRefreshModels(modelsStore);
+
+    await models.refresh({ providers: ["command-code"] });
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(models.getModel("command-code", cached.id)).toEqual(cached);
+    expect(await modelsStore.read("command-code")).toEqual(entry);
+  });
+
+  it("fetches and stores a stale non-forced catalog", async () => {
+    const modelsStore = new InMemoryModelsStore();
+    await modelsStore.write("command-code", { models: [cachedLiveOnlyModel()], checkedAt: 0 });
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(validPayload));
+    const { models } = await createRefreshModels(modelsStore);
+
+    await models.refresh({ providers: ["command-code"] });
+
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(models.getModel("command-code", "new-model")).toMatchObject({ name: "New Model" });
+    expect((await modelsStore.read("command-code"))?.models).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "new-model" })]),
+    );
+  });
+
+  it("fetches and stores a fresh catalog when forced", async () => {
+    const modelsStore = new InMemoryModelsStore();
+    await modelsStore.write("command-code", {
+      models: [cachedLiveOnlyModel()],
+      checkedAt: Date.now(),
+    });
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(validPayload));
+    const { models } = await createRefreshModels(modelsStore);
+
+    await models.refresh({ providers: ["command-code"], force: true });
+
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(models.getModel("command-code", "new-model")).toMatchObject({ name: "New Model" });
+    expect((await modelsStore.read("command-code"))?.models).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "new-model" })]),
+    );
+  });
+
+  it("retains the cached catalog when the fetch timeout aborts", async () => {
+    const timeout = new AbortController();
+    vi.spyOn(AbortSignal, "timeout").mockReturnValue(timeout.signal);
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      (_input, init) =>
+        new Promise((_, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new Error("timed out")), {
+            once: true,
+          });
+        }),
+    );
+    const modelsStore = new InMemoryModelsStore();
+    const cached = cachedLiveOnlyModel();
+    await modelsStore.write("command-code", { models: [cached], checkedAt: 0 });
+    const { models } = await createRefreshModels(modelsStore);
+
+    const refresh = models.refresh({ providers: ["command-code"], force: true });
+    timeout.abort();
+    const result = await refresh;
+
+    expect(result.errors.get("command-code")).toBeInstanceOf(Error);
+    expect(models.getModel("command-code", cached.id)).toEqual(cached);
+  });
+
+  it("reports caller cancellation without an error and retains the cached catalog", async () => {
+    let resolveFetchStarted!: () => void;
+    const fetchStarted = new Promise<void>((resolve) => {
+      resolveFetchStarted = resolve;
+    });
+    vi.spyOn(globalThis, "fetch").mockImplementation(
+      (_input, init) =>
+        new Promise((_, reject) => {
+          resolveFetchStarted();
+          init?.signal?.addEventListener("abort", () => reject(new Error("cancelled")), {
+            once: true,
+          });
+        }),
+    );
+    const modelsStore = new InMemoryModelsStore();
+    const cached = cachedLiveOnlyModel();
+    await modelsStore.write("command-code", { models: [cached], checkedAt: 0 });
+    const { models } = await createRefreshModels(modelsStore);
+    const caller = new AbortController();
+
+    const refresh = models.refresh({ providers: ["command-code"], signal: caller.signal });
+    await fetchStarted;
+    caller.abort();
+
+    expect(await refresh).toEqual({ aborted: true, errors: new Map() });
+    expect(models.getModel("command-code", cached.id)).toEqual(cached);
+  });
+
+  it("removes live-only models absent from a later successful catalog", async () => {
+    const payloads = [
+      validPayload,
+      {
+        object: "list",
+        data: [{ id: "another-model", name: "Another Model", context_length: 16_000 }],
+      },
+    ];
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => jsonResponse(payloads.shift()));
+    const { models } = await createRefreshModels();
+
+    await models.refresh({ providers: ["command-code"], force: true });
+    await models.refresh({ providers: ["command-code"], force: true });
+
+    expect(models.getModel("command-code", "new-model")).toBeUndefined();
+    expect(models.getModel("command-code", "another-model")).toMatchObject({
+      name: "Another Model",
+    });
+    expect(models.getModel("command-code", "claude-sonnet-5")).toBeDefined();
+  });
+
+  it("persists headerless models and applies ZDR only to each provider instance", async () => {
+    const original = process.env.CMD_ZDR;
+    try {
+      process.env.CMD_ZDR = "1";
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(validPayload));
+      const modelsStore = new InMemoryModelsStore();
+      const first = await createRefreshModels(modelsStore);
+
+      await first.models.refresh({ providers: ["command-code"], force: true });
+
+      const stored = await modelsStore.read("command-code");
+      expect(stored?.models).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: "new-model" })]),
+      );
+      expect(stored?.models.every((model) => model.headers === undefined)).toBe(true);
+      expect(first.models.getModel("command-code", "new-model")?.headers).toEqual({
+        "x-cmd-zdr": "1",
+      });
+
+      delete process.env.CMD_ZDR;
+      const second = await createRefreshModels(modelsStore);
+      await second.models.refresh({ providers: ["command-code"], allowNetwork: false });
+
+      expect(second.models.getModel("command-code", "new-model")?.headers).toBeUndefined();
+    } finally {
+      vi.restoreAllMocks();
       if (original === undefined) delete process.env.CMD_ZDR;
       else process.env.CMD_ZDR = original;
     }
