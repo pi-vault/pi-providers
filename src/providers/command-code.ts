@@ -1,11 +1,11 @@
 import {
+  anthropicMessagesApi,
   createProvider,
   envApiKeyAuth,
+  openAICompletionsApi,
   type Provider,
   type RefreshModelsContext,
-} from "@earendil-works/pi-ai";
-import { anthropicMessagesApi } from "@earendil-works/pi-ai/api/anthropic-messages.lazy";
-import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
+} from "@earendil-works/pi-ai/compat";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   COMMAND_CODE_BASE_URL,
