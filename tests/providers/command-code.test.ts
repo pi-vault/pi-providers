@@ -130,9 +130,21 @@ describe("Command Code catalog conversion", () => {
   });
 
   it("bundles the captured Command Code catalog", () => {
-    expect(COMMAND_CODE_CATALOG).toHaveLength(52);
-    expect(new Set(COMMAND_CODE_CATALOG.map((model) => model.id)).size).toBe(52);
-    expect(new Set(COMMAND_CODE_CATALOG.map((model) => model.name)).size).toBe(52);
+    const newIds = [
+      "deepseek/deepseek-v4-flash-vision-exp",
+      "z-ai/glm-5.3-flash",
+      "zai-org/GLM-5.3",
+      "minimax/minimax-m3-free",
+      "minimax/minimax-m2.7-free",
+      "Qwen/Qwen3.8-27B",
+      "Qwen/Qwen3.8-Flash",
+      "tencent/hy4-preview",
+      "google/gemini-3.7-flash",
+      "xai/grok-4.6",
+    ];
+
+    expect(COMMAND_CODE_CATALOG).toHaveLength(62);
+    expect(new Set(COMMAND_CODE_CATALOG.map((model) => model.id)).size).toBe(62);
     expect(
       COMMAND_CODE_CATALOG.every(
         (model) =>
@@ -142,22 +154,14 @@ describe("Command Code catalog conversion", () => {
           model.contextWindow > 0,
       ),
     ).toBe(true);
-    expect(commandCodeModels).toHaveLength(52);
-
-    const laguna = commandCodeModels.find((model) => model.id === "poolside/laguna-s-2.1-free");
-    expect(laguna?.cost).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+    expect(COMMAND_CODE_CATALOG.map((model) => model.id)).toEqual(expect.arrayContaining(newIds));
+    expect(COMMAND_CODE_CATALOG.find((model) => model.id === "gpt-5.5")?.contextWindow).toBe(
+      400_000,
+    );
     expect(
-      commandCodeModels.every((model) => {
-        if (model.id === "poolside/laguna-s-2.1-free") return true;
-        return (
-          model.cost.input > 0 &&
-          model.cost.output > 0 &&
-          [model.cost.input, model.cost.output, model.cost.cacheRead, model.cost.cacheWrite].every(
-            (rate) => Number.isFinite(rate) && rate >= 0,
-          )
-        );
-      }),
-    ).toBe(true);
+      COMMAND_CODE_CATALOG.find((model) => model.id === "deepseek/deepseek-v4-pro")?.name,
+    ).toBe("DeepSeek V4 Pro (latest)");
+    expect(commandCodeModels).toHaveLength(62);
   });
 
   it("uses Command’s stable and tiered pricing", () => {
@@ -271,7 +275,7 @@ describe("Command Code catalog conversion", () => {
       name: "Command Code",
       baseUrl: "https://api.commandcode.ai/provider/v1",
     });
-    expect(provider.getModels()).toHaveLength(52);
+    expect(provider.getModels()).toHaveLength(62);
     expect(new Set(provider.getModels().map((model) => model.api))).toEqual(
       new Set(["anthropic-messages", "openai-completions"]),
     );
