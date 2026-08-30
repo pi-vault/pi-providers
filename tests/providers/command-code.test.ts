@@ -231,6 +231,63 @@ describe("Command Code catalog conversion", () => {
     });
   });
 
+  it("uses Pi metadata for current live vision models", () => {
+    const cases = [
+      {
+        record: {
+          id: "deepseek/deepseek-v4-flash-vision-exp",
+          name: "DeepSeek V4 Flash Vision (exp)",
+          contextWindow: 1_000_000,
+        },
+        expected: { reasoning: true, input: ["text", "image"], maxTokens: 384_000 },
+      },
+      {
+        record: {
+          id: "z-ai/glm-5.3-flash",
+          name: "GLM-5.3 Flash",
+          contextWindow: 1_048_576,
+        },
+        expected: { reasoning: true, input: ["text", "image"], maxTokens: 131_072 },
+      },
+      {
+        record: {
+          id: "Qwen/Qwen3.8-27B",
+          name: "Qwen 3.8 27B",
+          contextWindow: 262_144,
+        },
+        expected: { reasoning: true, input: ["text", "image"], maxTokens: 32_768 },
+      },
+      {
+        record: {
+          id: "Qwen/Qwen3.8-Flash",
+          name: "Qwen 3.8 Flash",
+          contextWindow: 1_000_000,
+        },
+        expected: { reasoning: true, input: ["text", "image"], maxTokens: 131_072 },
+      },
+      {
+        record: {
+          id: "google/gemini-3.7-flash",
+          name: "Gemini 3.7 Flash",
+          contextWindow: 1_048_576,
+        },
+        expected: { reasoning: true, input: ["text", "image"], maxTokens: 65_536 },
+      },
+      {
+        record: {
+          id: "xai/grok-4.6",
+          name: "Grok 4.6",
+          contextWindow: 500_000,
+        },
+        expected: { reasoning: true, input: ["text", "image"], maxTokens: 500_000 },
+      },
+    ] as const;
+
+    for (const { record, expected } of cases) {
+      expect(modelFromCatalogRecord(record), record.id).toMatchObject(expected);
+    }
+  });
+
   it("falls back to a normalized display-name match", () => {
     expect(
       modelFromCatalogRecord({
