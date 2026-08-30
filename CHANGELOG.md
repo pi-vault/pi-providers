@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 2026-08-30 - [0.3.1]
+
+### Changed
+
+- Command Code provider switched to the `@earendil-works/pi-ai/compat` entry point so `anthropicMessagesApi`, `openAICompletionsApi`, and the `createProvider` / `Provider` / `RefreshModelsContext` imports come from a single module instead of three. Behavior is unchanged; all 110 tests still pass.
+
 ## 2026-08-30 - [0.3.0]
 
 ### Added

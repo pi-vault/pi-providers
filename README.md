@@ -48,6 +48,10 @@ After reloading, the providers appear in Pi's model picker:
 
 Ask Pi normally; there is no provider-specific prompt syntax. Image input works with `MiniMax-M3` and `step-3.7-flash`.
 
+## What's New In 0.3.1
+
+- **`command-code` import consolidation** — `command-code.ts` now imports `anthropicMessagesApi`, `openAICompletionsApi`, `createProvider`, `Provider`, and `RefreshModelsContext` from a single `@earendil-works/pi-ai/compat` entry point. No behavior change.
+
 ## What's New In 0.3.0
 
 - **`command-code` provider** (new) — bundled with 62 snapshot models captured on 2026-08-29, `CMD_API_KEY` authentication, optional `CMD_ZDR=1` zero-data-retention requests, and dual routing (Claude/Anthropic Messages for Claude IDs, OpenAI Chat Completions for everything else).
