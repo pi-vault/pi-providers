@@ -21,7 +21,7 @@
 - Preserve the current cost overlay and unknown-ID `ZERO_COST` fallback until Phase 3.
 - Do not modify MiniMax or StepFun source files or tests.
 
-**Prerequisite:** Phase 1 is committed and both Pi packages resolve 0.84.4.
+**Prerequisite:** Phase 1 is committed and both Pi packages resolve to versions satisfying `>=0.84.4`.
 
 **Usable result:** Every model in the 2026-08-29 Provider API snapshot remains selectable offline with correct identity, context, routing, and donor capabilities.
 

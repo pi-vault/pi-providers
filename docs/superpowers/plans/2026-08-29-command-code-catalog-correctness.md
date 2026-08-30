@@ -13,6 +13,7 @@
 ## Global Constraints
 
 - Require `@earendil-works/pi-ai >=0.84.4` and `@earendil-works/pi-coding-agent >=0.84.4`; use `^0.84.4` for development dependencies.
+- Use the published packages resolved by pnpm as the metadata source of truth; do not depend on a separate local Pi checkout.
 - Keep provider ID `command-code`, `CMD_API_KEY`, `CMD_ZDR=1`, and all public factory/registration signatures unchanged.
 - Keep `https://api.commandcode.ai/provider/v1/chat/completions`, `/provider/v1/messages`, and `/provider/v1/models` unchanged.
 - Keep Pi-managed persistence, offline restoration, four-hour freshness, failure retention, cancellation, and ZDR behavior unchanged.
@@ -41,7 +42,7 @@
 **Interfaces:**
 
 - Consumes: `modelFromCatalogRecord(record: CommandCodeCatalogRecord): CommandCodeModel` and Pi's built-in provider catalog.
-- Produces: correct `reasoning`, `input`, and `maxTokens` metadata for all ten newly captured live model IDs without changing the converter API.
+- Produces: correct `reasoning`, `input`, and `maxTokens` metadata for the six newly captured vision-capable model IDs without changing the converter API.
 
 - [ ] **Step 1: Add a failing donor-metadata test**
 
@@ -165,7 +166,7 @@ Run:
 pnpm install
 ```
 
-Expected: `pnpm-lock.yaml` resolves the synchronized Pi packages at 0.84.4 and no unrelated direct dependency changes.
+Expected: `pnpm-lock.yaml` resolves the synchronized Pi packages to versions satisfying `>=0.84.4`, with no unrelated direct dependency changes. With 0.84.4 as the latest compatible release, both resolve to 0.84.4; a later compatible 0.84.x patch is also valid.
 
 - [ ] **Step 5: Run the donor-metadata test and verify it passes**
 
@@ -185,9 +186,30 @@ Run:
 pnpm list @earendil-works/pi-ai @earendil-works/pi-coding-agent --depth 0
 ```
 
-Expected: both direct development dependencies report version 0.84.4.
+Expected: both direct development dependencies satisfy `>=0.84.4`.
 
-- [ ] **Step 7: Commit the metadata donor upgrade**
+- [ ] **Step 7: Run the full supported-runtime gate**
+
+Run:
+
+```bash
+env npm_config_cache=/private/tmp/pi-providers-command-correctness-npm-cache mise x node@24.15.0 -- pnpm check
+```
+
+Expected: formatting, linting, type checking, the complete test suite, and package verification pass.
+
+- [ ] **Step 8: Inspect the scoped phase diff**
+
+Run:
+
+```bash
+git diff --check
+git status --short
+```
+
+Expected: no whitespace errors, and only `package.json`, `pnpm-lock.yaml`, and `tests/providers/command-code.test.ts` are modified.
+
+- [ ] **Step 9: Commit the metadata donor upgrade**
 
 ```bash
 git add package.json pnpm-lock.yaml tests/providers/command-code.test.ts
