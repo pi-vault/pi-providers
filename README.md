@@ -48,6 +48,12 @@ After reloading, the providers appear in Pi's model picker:
 
 Ask Pi normally; there is no provider-specific prompt syntax. Image input works with `MiniMax-M3` and `step-3.7-flash`.
 
+## What's New In 0.3.0
+
+- **`command-code` provider** (new) — bundled with 62 snapshot models captured on 2026-08-29, `CMD_API_KEY` authentication, optional `CMD_ZDR=1` zero-data-retention requests, and dual routing (Claude/Anthropic Messages for Claude IDs, OpenAI Chat Completions for everything else).
+- **Live catalog overlay** — Command Code fetches its model list from `https://api.commandcode.ai/provider/v1/models`, refreshes at most every four hours, and persists the last successful overlay for offline restore. On first run, or after a refresh failure, the bundled snapshot stays visible until a refresh succeeds.
+- **Toolchain updates** — TypeScript 7, Biome 2.5.11 schema. No code changes were required for the TypeScript bump. See [`CHANGELOG.md`](CHANGELOG.md) for the full release notes.
+
 ## Providers And Models
 
 | Provider                               | Model                      | Input       | Reasoning                 | Context   | Max output | Input / output per 1M tokens | Cache read |
@@ -82,7 +88,7 @@ Cache writes are free for `MiniMax-M3`. They cost $0.375 per 1M tokens for `Mini
 ```bash
 pnpm install
 pnpm check
-pnpm release:check
+pnpm pack:dry-run
 ```
 
 ## Changelog
