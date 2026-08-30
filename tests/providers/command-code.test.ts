@@ -231,6 +231,24 @@ describe("Command Code catalog conversion", () => {
     });
   });
 
+  it.each([
+    ["deepseek/deepseek-v4-flash-vision-exp", "DeepSeek V4 Flash Vision (exp)", 1_000_000, 384_000],
+    ["z-ai/glm-5.3-flash", "GLM-5.3 Flash", 1_048_576, 131_072],
+    ["Qwen/Qwen3.8-27B", "Qwen 3.8 27B", 262_144, 32_768],
+    ["Qwen/Qwen3.8-Flash", "Qwen 3.8 Flash", 1_000_000, 131_072],
+    ["google/gemini-3.7-flash", "Gemini 3.7 Flash", 1_048_576, 65_536],
+    ["xai/grok-4.6", "Grok 4.6", 500_000, 500_000],
+  ])(
+    "uses Pi metadata for current live vision models: %s",
+    (id, name, contextWindow, maxTokens) => {
+      expect(modelFromCatalogRecord({ id, name, contextWindow }), id).toMatchObject({
+        reasoning: true,
+        input: ["text", "image"],
+        maxTokens,
+      });
+    },
+  );
+
   it("falls back to a normalized display-name match", () => {
     expect(
       modelFromCatalogRecord({

@@ -15,6 +15,7 @@
 ## Global Constraints
 
 - Require `@earendil-works/pi-ai >=0.84.4` and `@earendil-works/pi-coding-agent >=0.84.4`; use `^0.84.4` for development dependencies.
+- Use the published packages resolved by pnpm as the metadata source of truth; do not depend on a separate local Pi checkout.
 - Keep provider ID `command-code`, `CMD_API_KEY`, `CMD_ZDR=1`, public factory/registration signatures, endpoints, and refresh behavior unchanged.
 - Reuse Pi 0.84.4's exact-ID and normalized-name donor metadata; do not add a local capability override table.
 - Do not modify the bundled catalog, Command pricing, MiniMax, or StepFun in this phase.
@@ -136,7 +137,7 @@ Run:
 pnpm install
 ```
 
-Expected: `pnpm-lock.yaml` resolves both synchronized Pi packages at 0.84.4 with no unrelated direct dependency changes.
+Expected: `pnpm-lock.yaml` resolves both synchronized Pi packages to versions satisfying `>=0.84.4`, with no unrelated direct dependency changes. With 0.84.4 as the latest compatible release, both resolve to 0.84.4; a later compatible 0.84.x patch is also valid.
 
 - [ ] **Step 5: Verify the focused test and resolved versions**
 
@@ -147,19 +148,30 @@ pnpm vitest run tests/providers/command-code.test.ts -t "uses Pi metadata for cu
 pnpm list @earendil-works/pi-ai @earendil-works/pi-coding-agent --depth 0
 ```
 
-Expected: the test passes for all six records and both direct development dependencies report 0.84.4.
+Expected: the test passes for all six records and both direct development dependencies satisfy `>=0.84.4`.
 
-- [ ] **Step 6: Run the complete provider test file**
+- [ ] **Step 6: Run the full supported-runtime gate**
 
 Run:
 
 ```bash
-pnpm vitest run tests/providers/command-code.test.ts
+env npm_config_cache=/private/tmp/pi-providers-command-correctness-npm-cache mise x node@24.15.0 -- pnpm check
 ```
 
-Expected: all existing catalog, conversion, transport, auth, ZDR, refresh, persistence, timeout, and cancellation tests pass.
+Expected: formatting, linting, type checking, the complete test suite, and package verification pass. This includes all existing Command Code catalog, conversion, transport, auth, ZDR, refresh, persistence, timeout, and cancellation tests.
 
-- [ ] **Step 7: Commit the atomic phase**
+- [ ] **Step 7: Inspect the scoped diff**
+
+Run:
+
+```bash
+git diff --check
+git status --short
+```
+
+Expected: no whitespace errors, and only `package.json`, `pnpm-lock.yaml`, and `tests/providers/command-code.test.ts` are modified.
+
+- [ ] **Step 8: Commit the atomic phase**
 
 ```bash
 git add package.json pnpm-lock.yaml tests/providers/command-code.test.ts
@@ -168,7 +180,7 @@ git commit -m "fix: update Command Code model metadata donors"
 
 ## Phase 1 Acceptance Criteria
 
-- Both Pi development packages resolve 0.84.4 and both peer floors are `>=0.84.4`.
+- Both Pi development packages resolve to versions satisfying `>=0.84.4`, and both peer floors are `>=0.84.4`.
 - All six current live vision records inherit reasoning, image input, and output-limit metadata.
 - The existing 52-model baseline, transport, registration, and refresh behavior are unchanged.
-- The complete Command Code test file passes.
+- The full Node.js 24.15.0 `pnpm check` gate passes.
