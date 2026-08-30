@@ -162,16 +162,73 @@ describe("Command Code catalog conversion", () => {
       COMMAND_CODE_CATALOG.find((model) => model.id === "deepseek/deepseek-v4-pro")?.name,
     ).toBe("DeepSeek V4 Pro (latest)");
     expect(commandCodeModels).toHaveLength(62);
+
+    const zeroCostIds = new Set([
+      "poolside/laguna-s-2.1-free",
+      "minimax/minimax-m3-free",
+      "minimax/minimax-m2.7-free",
+    ]);
+
+    expect(
+      commandCodeModels.every((model) => {
+        if (zeroCostIds.has(model.id)) {
+          return Object.values(model.cost).every((rate) =>
+            Array.isArray(rate) ? true : rate === 0,
+          );
+        }
+        return (
+          model.cost.input > 0 &&
+          model.cost.output > 0 &&
+          [model.cost.input, model.cost.output, model.cost.cacheRead, model.cost.cacheWrite].every(
+            (rate) => Number.isFinite(rate) && rate >= 0,
+          )
+        );
+      }),
+    ).toBe(true);
   });
 
   it("uses Command’s stable and tiered pricing", () => {
     const costFor = (id: string) =>
       modelFromCatalogRecord({ id, name: id, contextWindow: 1_000_000 }).cost;
 
+    expect(costFor("claude-sonnet-5")).toEqual({
+      input: 2,
+      output: 10,
+      cacheRead: 0.2,
+      cacheWrite: 2.5,
+    });
+    expect(costFor("gpt-5.6-terra")).toEqual({
+      input: 2,
+      output: 12,
+      cacheRead: 0.2,
+      cacheWrite: 2.5,
+      tiers: [{ inputTokensAbove: 272_000, input: 4, output: 18, cacheRead: 0.4, cacheWrite: 5 }],
+    });
+    expect(costFor("gpt-5.6-luna")).toEqual({
+      input: 0.2,
+      output: 1.2,
+      cacheRead: 0.02,
+      cacheWrite: 0.25,
+      tiers: [
+        { inputTokensAbove: 272_000, input: 0.4, output: 1.8, cacheRead: 0.04, cacheWrite: 0.5 },
+      ],
+    });
     expect(costFor("deepseek/deepseek-v4-pro")).toEqual({
-      input: 0.435,
-      output: 0.87,
-      cacheRead: 0.003625,
+      input: 0.66,
+      output: 1.98,
+      cacheRead: 0.022,
+      cacheWrite: 0,
+    });
+    expect(costFor("deepseek/deepseek-v4-flash")).toEqual({
+      input: 0.22,
+      output: 0.66,
+      cacheRead: 0.007,
+      cacheWrite: 0,
+    });
+    expect(costFor("deepseek/deepseek-v4-flash-vision-exp")).toEqual({
+      input: 0.22,
+      output: 0.66,
+      cacheRead: 0.007,
       cacheWrite: 0,
     });
     expect(costFor("MiniMaxAI/MiniMax-M3")).toEqual({
@@ -192,27 +249,59 @@ describe("Command Code catalog conversion", () => {
       cacheRead: 0.0028,
       cacheWrite: 0,
     });
-    expect(costFor("claude-sonnet-5")).toEqual({
-      input: 3,
-      output: 15,
-      cacheRead: 0.3,
-      cacheWrite: 3.75,
+    expect(costFor("z-ai/glm-5.3-flash")).toEqual({
+      input: 0.15,
+      output: 0.5,
+      cacheRead: 0.03,
+      cacheWrite: 0,
     });
-    expect(costFor("gpt-5.6-terra")).toEqual({
+    expect(costFor("zai-org/GLM-5.3")).toEqual({
+      input: 1.4,
+      output: 4.4,
+      cacheRead: 0.26,
+      cacheWrite: 0,
+    });
+    expect(costFor("Qwen/Qwen3.8-27B")).toEqual({
+      input: 0.4,
+      output: 3,
+      cacheRead: 0.04,
+      cacheWrite: 0,
+    });
+    expect(costFor("Qwen/Qwen3.8-Flash")).toEqual({
+      input: 0.16,
+      output: 0.47,
+      cacheRead: 0.016,
+      cacheWrite: 0,
+    });
+    expect(costFor("tencent/hy4-preview")).toEqual({
+      input: 0.834,
+      output: 2.501,
+      cacheRead: 0.042,
+      cacheWrite: 0,
+    });
+    expect(costFor("google/gemini-3.7-flash")).toEqual({
+      input: 0.75,
+      output: 3.75,
+      cacheRead: 0.075,
+      cacheWrite: 0.04167,
+    });
+    expect(costFor("xai/grok-4.6")).toEqual({
       input: 2,
-      output: 12,
-      cacheRead: 0.2,
-      cacheWrite: 2.5,
-      tiers: [{ inputTokensAbove: 272_000, input: 4, output: 18, cacheRead: 0.4, cacheWrite: 5 }],
+      output: 6,
+      cacheRead: 0.5,
+      cacheWrite: 0,
     });
-    expect(costFor("gpt-5.6-luna")).toEqual({
-      input: 0.2,
-      output: 1.2,
-      cacheRead: 0.02,
-      cacheWrite: 0.25,
-      tiers: [
-        { inputTokensAbove: 272_000, input: 0.4, output: 1.8, cacheRead: 0.04, cacheWrite: 0.5 },
-      ],
+    expect(costFor("minimax/minimax-m3-free")).toEqual({
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+    });
+    expect(costFor("minimax/minimax-m2.7-free")).toEqual({
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
     });
   });
 
@@ -229,7 +318,7 @@ describe("Command Code catalog conversion", () => {
       reasoning: true,
       input: ["text", "image"],
       maxTokens: 128_000,
-      cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+      cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
       thinkingLevelMap: { xhigh: "xhigh", max: "max" },
       compat: { forceAdaptiveThinking: true },
     });

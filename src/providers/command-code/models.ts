@@ -197,9 +197,9 @@ export const COMMAND_CODE_CATALOG = [
 type CommandCodeCatalogId = (typeof COMMAND_CODE_CATALOG)[number]["id"];
 
 // Snapshot source: https://commandcode.ai/docs/resources/pricing-limits
-// Stable post-promotion rates captured 2026-08-08; USD per 1M tokens.
+// Effective rates billed 2026-08-29, USD per 1M tokens.
 const COMMAND_COSTS: Readonly<Partial<Record<CommandCodeCatalogId, ModelCost>>> = {
-  "claude-sonnet-5": { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+  "claude-sonnet-5": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
   "claude-sonnet-4-6": { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
   "claude-fable-5": { input: 10, output: 50, cacheRead: 1, cacheWrite: 12.5 },
   "claude-opus-5": { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
@@ -227,8 +227,17 @@ const COMMAND_COSTS: Readonly<Partial<Record<CommandCodeCatalogId, ModelCost>>> 
   "gpt-5.4": { input: 2.5, output: 15, cacheRead: 0.25, cacheWrite: 0 },
   "gpt-5.3-codex": { input: 2, output: 8, cacheRead: 0.5, cacheWrite: 0 },
   "gpt-5.4-mini": { input: 0.75, output: 4.5, cacheRead: 0.075, cacheWrite: 0 },
-  "deepseek/deepseek-v4-pro": { input: 0.435, output: 0.87, cacheRead: 0.003625, cacheWrite: 0 },
-  "deepseek/deepseek-v4-flash": { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0 },
+  // ponytail: Pi ModelCost cannot express UTC price bands. These are Command's displayed
+  // off-peak estimates; refresh them if Command changes the bands or Pi gains time-band pricing.
+  // Peak input/output: Pro 1.32/3.96; Flash and Flash Vision 0.44/1.32.
+  "deepseek/deepseek-v4-pro": { input: 0.66, output: 1.98, cacheRead: 0.022, cacheWrite: 0 },
+  "deepseek/deepseek-v4-flash": { input: 0.22, output: 0.66, cacheRead: 0.007, cacheWrite: 0 },
+  "deepseek/deepseek-v4-flash-vision-exp": {
+    input: 0.22,
+    output: 0.66,
+    cacheRead: 0.007,
+    cacheWrite: 0,
+  },
   "moonshotai/Kimi-K3": { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 0 },
   "moonshotai/Kimi-K2.7-Code": { input: 0.95, output: 4, cacheRead: 0.19, cacheWrite: 0 },
   "moonshotai/Kimi-K2.7-Code-Highspeed": { input: 1.9, output: 8, cacheRead: 0.38, cacheWrite: 0 },
@@ -238,12 +247,20 @@ const COMMAND_COSTS: Readonly<Partial<Record<CommandCodeCatalogId, ModelCost>>> 
   "zai-org/GLM-5.2-Fast": { input: 3, output: 10.25, cacheRead: 0.5, cacheWrite: 0 },
   "zai-org/GLM-5.1": { input: 1.4, output: 4.4, cacheRead: 0.26, cacheWrite: 0 },
   "zai-org/GLM-5": { input: 1, output: 3.2, cacheRead: 0.2, cacheWrite: 0 },
+  "z-ai/glm-5.3-flash": { input: 0.15, output: 0.5, cacheRead: 0.03, cacheWrite: 0 },
+  "zai-org/GLM-5.3": { input: 1.4, output: 4.4, cacheRead: 0.26, cacheWrite: 0 },
   "MiniMaxAI/MiniMax-M3": { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0 },
   "MiniMaxAI/MiniMax-M2.7": { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0 },
   "MiniMaxAI/MiniMax-M2.5": { input: 0.3, output: 1.2, cacheRead: 0.03, cacheWrite: 0 },
+  // ponytail: ModelCost cannot expire rates. These IDs are free through 2026-09-05
+  // and go offline 2026-09-06; remove them when the bundled catalog is refreshed.
+  "minimax/minimax-m3-free": ZERO_COST,
+  "minimax/minimax-m2.7-free": ZERO_COST,
   "xiaomi/mimo-v2.5-pro": { input: 0.435, output: 0.87, cacheRead: 0.0036, cacheWrite: 0 },
   "xiaomi/mimo-v2.5": { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0 },
   "Qwen/Qwen3.8-Max": { input: 2, output: 6, cacheRead: 0.25, cacheWrite: 2.5 },
+  "Qwen/Qwen3.8-27B": { input: 0.4, output: 3, cacheRead: 0.04, cacheWrite: 0 },
+  "Qwen/Qwen3.8-Flash": { input: 0.16, output: 0.47, cacheRead: 0.016, cacheWrite: 0 },
   "Qwen/Qwen3.7-Max": { input: 2.5, output: 7.5, cacheRead: 0.5, cacheWrite: 3.13 },
   "Qwen/Qwen3.7-Plus": { input: 0.4, output: 1.6, cacheRead: 0.08, cacheWrite: 0.5 },
   "Qwen/Qwen3.7-Flash": { input: 0.03, output: 0.13, cacheRead: 0.006, cacheWrite: 0.038 },
@@ -252,6 +269,10 @@ const COMMAND_COSTS: Readonly<Partial<Record<CommandCodeCatalogId, ModelCost>>> 
   "stepfun/Step-3.7-Flash": { input: 0.2, output: 1.15, cacheRead: 0.04, cacheWrite: 0 },
   "stepfun/Step-3.5-Flash": { input: 0.1, output: 0.3, cacheRead: 0.02, cacheWrite: 0 },
   "tencent/hy3-paid": { input: 0.14, output: 0.58, cacheRead: 0.035, cacheWrite: 0 },
+  "tencent/hy4-preview": { input: 0.834, output: 2.501, cacheRead: 0.042, cacheWrite: 0 },
+  // ponytail: ModelCost cannot expire rates. Gemini 3.7 Flash is 50% off through
+  // 2026-12-31; refresh this snapshot after the promotion ends.
+  "google/gemini-3.7-flash": { input: 0.75, output: 3.75, cacheRead: 0.075, cacheWrite: 0.04167 },
   "google/gemini-3.6-flash": { input: 1.5, output: 7.5, cacheRead: 0.15, cacheWrite: 0 },
   "google/gemini-3.5-flash": { input: 1.5, output: 9, cacheRead: 0.15, cacheWrite: 0 },
   "google/gemini-3.5-flash-lite": { input: 0.3, output: 2.5, cacheRead: 0.03, cacheWrite: 0 },
@@ -264,6 +285,7 @@ const COMMAND_COSTS: Readonly<Partial<Record<CommandCodeCatalogId, ModelCost>>> 
   "meta/muse-spark-1.2": { input: 1.25, output: 4.25, cacheRead: 0.15, cacheWrite: 0 },
   "meta/muse-spark-1.2-contributor": { input: 0.1, output: 0.2, cacheRead: 0.002, cacheWrite: 0 },
   "xai/grok-4.5": { input: 2, output: 6, cacheRead: 0.5, cacheWrite: 0 },
+  "xai/grok-4.6": { input: 2, output: 6, cacheRead: 0.5, cacheWrite: 0 },
 };
 
 export const commandCodeModels = COMMAND_CODE_CATALOG.map(modelFromCatalogRecord);
