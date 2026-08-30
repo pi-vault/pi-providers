@@ -4,19 +4,23 @@
 
 **Parent plan:** [2026-08-29-command-code-catalog-correctness.md](./2026-08-29-command-code-catalog-correctness.md)
 
-**Goal:** Apply the parent plan's dated Command Code price estimates to the 62-model baseline while retaining explicit free models and the unknown-model zero fallback.
+**Goal:** Apply Command Code's billed 2026-08-29 price snapshot to the 62-model baseline while retaining explicit free models and the unknown-model zero fallback.
 
-**Architecture:** Keep pricing as the existing exact-ID overlay in `models.ts`; update only proven stale or newly required entries. Represent DeepSeek's UTC bands with the displayed off-peak estimate and document the model-type limitation beside the data.
+**Architecture:** Keep pricing as the existing exact-ID overlay in `models.ts`; update only proven stale or newly required entries. Represent DeepSeek's UTC bands and temporary promotions with the rates billed on the snapshot date, documenting the static-model limitations and expiry dates beside the data.
 
 **Tech Stack:** TypeScript 6, Node.js 24.15.0, pnpm, Vitest, and Pi's `ModelCost` shape.
 
 **Spec:** [docs/superpowers/plans/2026-08-29-command-code-catalog-correctness.md](./2026-08-29-command-code-catalog-correctness.md)
 
+**References:** [Command Code Provider API](https://commandcode.ai/docs/provider), [Command Code pricing](https://commandcode.ai/docs/resources/pricing-limits), and Pi's `ModelCost` definition at `/Users/lanh/Developer/pi-packages/pi/packages/ai/src/types.ts`.
+
 ## Global Constraints
 
-- Costs are static USD estimates per 1M tokens.
+- Costs are the effective rates billed on 2026-08-29 in USD per 1M tokens, including active promotions.
+- Treat open-source rates as Command's displayed mean across upstream providers; request costs may vary slightly by route.
 - Preserve the zero-cost fallback for unknown future IDs.
 - Use exact IDs; do not introduce a pricing service, price-band abstraction, or runtime fetch.
+- Keep the 62-model `/provider/v1/models` baseline; do not add pricing-page-only models.
 - Keep every unrelated cost entry, public API, endpoint, auth, ZDR, refresh, persistence, and registration behavior unchanged.
 - Do not modify MiniMax or StepFun source files or tests.
 
@@ -98,15 +102,60 @@ expect(costFor("deepseek/deepseek-v4-flash-vision-exp")).toEqual({
   cacheRead: 0.007,
   cacheWrite: 0,
 });
-expect(costFor("z-ai/glm-5.3-flash")).toEqual({ input: 0.15, output: 0.5, cacheRead: 0.03, cacheWrite: 0 });
-expect(costFor("zai-org/GLM-5.3")).toEqual({ input: 1.4, output: 4.4, cacheRead: 0.26, cacheWrite: 0 });
-expect(costFor("Qwen/Qwen3.8-27B")).toEqual({ input: 0.4, output: 3, cacheRead: 0.04, cacheWrite: 0 });
-expect(costFor("Qwen/Qwen3.8-Flash")).toEqual({ input: 0.16, output: 0.47, cacheRead: 0.016, cacheWrite: 0 });
-expect(costFor("tencent/hy4-preview")).toEqual({ input: 0.834, output: 2.501, cacheRead: 0.042, cacheWrite: 0 });
-expect(costFor("google/gemini-3.7-flash")).toEqual({ input: 1.5, output: 7.5, cacheRead: 0.15, cacheWrite: 0.04167 });
-expect(costFor("xai/grok-4.6")).toEqual({ input: 2, output: 6, cacheRead: 0.5, cacheWrite: 0 });
-expect(costFor("minimax/minimax-m3-free")).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
-expect(costFor("minimax/minimax-m2.7-free")).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+expect(costFor("z-ai/glm-5.3-flash")).toEqual({
+  input: 0.15,
+  output: 0.5,
+  cacheRead: 0.03,
+  cacheWrite: 0,
+});
+expect(costFor("zai-org/GLM-5.3")).toEqual({
+  input: 1.4,
+  output: 4.4,
+  cacheRead: 0.26,
+  cacheWrite: 0,
+});
+expect(costFor("Qwen/Qwen3.8-27B")).toEqual({
+  input: 0.4,
+  output: 3,
+  cacheRead: 0.04,
+  cacheWrite: 0,
+});
+expect(costFor("Qwen/Qwen3.8-Flash")).toEqual({
+  input: 0.16,
+  output: 0.47,
+  cacheRead: 0.016,
+  cacheWrite: 0,
+});
+expect(costFor("tencent/hy4-preview")).toEqual({
+  input: 0.834,
+  output: 2.501,
+  cacheRead: 0.042,
+  cacheWrite: 0,
+});
+expect(costFor("google/gemini-3.7-flash")).toEqual({
+  input: 0.75,
+  output: 3.75,
+  cacheRead: 0.075,
+  cacheWrite: 0.04167,
+});
+expect(costFor("xai/grok-4.6")).toEqual({
+  input: 2,
+  output: 6,
+  cacheRead: 0.5,
+  cacheWrite: 0,
+});
+expect(costFor("minimax/minimax-m3-free")).toEqual({
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+});
+expect(costFor("minimax/minimax-m2.7-free")).toEqual({
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+});
 ```
 
 - [ ] **Step 3: Run the catalog and pricing tests and verify they fail**
@@ -137,8 +186,22 @@ Change the cost snapshot comment date to `2026-08-29`. Place this comment immedi
 
 ```ts
 // ponytail: Pi ModelCost cannot express UTC price bands. These are Command's displayed
-// off-peak estimates; replace them if /models exposes request-time pricing.
+// off-peak estimates; refresh them if Command changes the bands or Pi gains time-band pricing.
 // Peak input/output: Pro 1.32/3.96; Flash and Flash Vision 0.44/1.32.
+```
+
+Place this comment immediately above the MiniMax free entries:
+
+```ts
+// ponytail: ModelCost cannot expire rates. These IDs are free through 2026-09-05
+// and go offline 2026-09-06; remove them when the bundled catalog is refreshed.
+```
+
+Place this comment immediately above the Gemini 3.7 Flash entry:
+
+```ts
+// ponytail: ModelCost cannot expire rates. Gemini 3.7 Flash is 50% off through
+// 2026-12-31; refresh this snapshot after the promotion ends.
 ```
 
 - [ ] **Step 2: Replace the three stale entries and add the new entries**
@@ -168,12 +231,10 @@ Expected: the pricing contract passes, all non-free bundled models have positive
 Run:
 
 ```bash
-pnpm typecheck
-pnpm build
-pnpm lint
+env npm_config_cache=/private/tmp/pi-providers-command-pricing-npm-cache mise x node@24.15.0 -- pnpm check
 ```
 
-Expected: all commands exit 0. Existing unrelated `noNonNullAssertion` warnings may remain warnings; do not edit those files.
+Expected: formatting, linting, type checking, the complete test suite, and package verification pass. Existing unrelated `noNonNullAssertion` warnings may remain warnings; do not edit those files.
 
 - [ ] **Step 5: Commit the atomic phase**
 
@@ -184,8 +245,8 @@ git commit -m "fix: refresh Command Code pricing"
 
 ## Phase 3 Acceptance Criteria
 
-- Claude Sonnet 5, DeepSeek V4, and all newly bundled paid records match the exact estimates in this plan.
+- Claude Sonnet 5, DeepSeek V4, Gemini 3.7 Flash, and all newly bundled paid records match the billed 2026-08-29 estimates in this plan.
 - The three explicit free IDs have all-zero costs; unknown future IDs still receive `ZERO_COST`.
-- The DeepSeek off-peak representation and peak rates are documented beside the data.
+- The DeepSeek off-peak representation, peak rates, and temporary Gemini and MiniMax pricing expiry dates are documented beside the data.
 - No unrelated price, provider behavior, or public interface changes.
-- Focused tests, the full Command Code test file, typecheck, build, and lint pass.
+- Focused tests, the full Command Code test file, and the supported-runtime `pnpm check` pass.
