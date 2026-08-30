@@ -5,7 +5,7 @@
 [![Node >= 24.15.0](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
 
-Register [MiniMax M3](https://www.minimax.io/), [StepFun Flash](https://stepfun.ai/), and [Command Code](https://commandcode.ai/) models as custom providers for [Pi](https://github.com/earendil-works/pi). Command Code requires Pi 0.84.1 or newer.
+Register [MiniMax M3](https://www.minimax.io/), [StepFun Flash](https://stepfun.ai/), and [Command Code](https://commandcode.ai/) models as custom providers for [Pi](https://github.com/earendil-works/pi). Command Code requires Pi 0.84.4 or newer.
 
 ## Install, Upgrade, And Reload
 
@@ -58,7 +58,7 @@ Ask Pi normally; there is no provider-specific prompt syntax. Image input works 
 | `stepfun-ai`                           | `step-3.7-flash`           | text, image | low / medium / high       | 256,000   | 256,000    | $0.20 / $1.15                | $0.04      |
 | `stepfun-ai`                           | `step-3.5-flash-2603`      | text        | low / high                | 256,000   | 256,000    | $0.10 / $0.30                | $0.02      |
 | `stepfun-ai`                           | `step-3.5-flash`           | text        | automatic (shown as high) | 256,000   | 256,000    | $0.10 / $0.30                | $0.02      |
-| `command-code`                         | 52 bundled snapshot models | varies      | varies                    | varies    | varies     | dated snapshot               | varies     |
+| `command-code`                         | 62 bundled snapshot models | varies      | varies                    | varies    | varies     | dated snapshot               | varies     |
 
 API bases:
 
@@ -74,7 +74,7 @@ Cache writes are free for `MiniMax-M3`. They cost $0.375 per 1M tokens for `Mini
 - **Key matching.** The provider code passes the corresponding environment-variable reference (`$MINIMAX_API_KEY`, `$MINIMAX_CN_API_KEY`, `$STEP_API_KEY`) to Pi. If the variable is unset, the provider cannot authenticate.
 - **MiniMax tool-call hardening.** The `minimax-openai` and `minimax-openai-cn` providers wrap their streams with a MiniMax-specific pipeline that folds inline `think` blocks into a proper `thinking` content block, repairs empty `{}` tool-call arguments via second-chance JSON parse, reorders tool-result messages to match the order of preceding `tool_use` blocks (the MiniMax API rejects mismatched ordering), and fails closed with a retryable error if the upstream ever emits internal tool-call markup instead of proper OpenAI tool calls.
 - **StepFun native stream.** StepFun uses Pi's built-in OpenAI-compatible driver directly, without the MiniMax hardening pipeline.
-- **Command Code catalog.** The 52 bundled models remain the static baseline. A successful live catalog response is a separate overlay that adds or replaces model records; later responses can remove only prior live-only overlay records. Pi persists the last successful overlay and restores it offline; online checks run at most every four hours unless forced. Refreshing requires `CMD_API_KEY`; on the first run, or after a refresh failure, Pi keeps showing the bundled or prior catalog until a successful refresh completes. Claude IDs use Anthropic Messages, and all other IDs use OpenAI Chat Completions. Prices are USD per 1M tokens and include permanent Command discounts. Temporary GPT/Claude promotions use their documented post-promotion rates; the capacity-limited free Laguna offer remains unknown. Open-model routing can change the upstream and actual charge. `CMD_ZDR=1` applies only when making requests and is never persisted in the model cache.
+- **Command Code catalog.** The 62 bundled models captured on 2026-08-29 remain the static baseline. A successful live catalog response is a separate overlay that adds or replaces model records; later responses can remove only prior live-only overlay records. Pi persists the last successful overlay and restores it offline; online checks run at most every four hours unless forced. Refreshing requires `CMD_API_KEY`; on the first run, or after a refresh failure, Pi keeps showing the bundled or prior catalog until a successful refresh completes. Claude IDs use Anthropic Messages, and all other IDs use OpenAI Chat Completions. Prices are dated estimates in USD per 1M tokens. Temporary offers use the rates advertised on 2026-08-29 and may change or expire; explicit free model IDs are zero in this snapshot and must be refreshed when their offers expire or the IDs leave the live catalog. DeepSeek V4 uses the displayed off-peak estimate because Pi cannot represent UTC price bands, and its peak input/output rates are higher. Open-model routing and ZDR can also change the actual charge; Command's usage page remains authoritative. `CMD_ZDR=1` applies only when making requests and is never persisted in the model cache.
 - **Deeply nested tool schemas.** The MiniMax API may produce collapsed nested arguments on complex JSON schemas; this has been observed with `MiniMax-M3`. The package emits a diagnostic message instead of retrying.
 
 ## Development And Verification
