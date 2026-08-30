@@ -191,118 +191,54 @@ describe("Command Code catalog conversion", () => {
     const costFor = (id: string) =>
       modelFromCatalogRecord({ id, name: id, contextWindow: 1_000_000 }).cost;
 
-    expect(costFor("claude-sonnet-5")).toEqual({
-      input: 2,
-      output: 10,
-      cacheRead: 0.2,
-      cacheWrite: 2.5,
-    });
-    expect(costFor("gpt-5.6-terra")).toEqual({
-      input: 2,
-      output: 12,
-      cacheRead: 0.2,
-      cacheWrite: 2.5,
-      tiers: [{ inputTokensAbove: 272_000, input: 4, output: 18, cacheRead: 0.4, cacheWrite: 5 }],
-    });
-    expect(costFor("gpt-5.6-luna")).toEqual({
-      input: 0.2,
-      output: 1.2,
-      cacheRead: 0.02,
-      cacheWrite: 0.25,
-      tiers: [
-        { inputTokensAbove: 272_000, input: 0.4, output: 1.8, cacheRead: 0.04, cacheWrite: 0.5 },
-      ],
-    });
-    expect(costFor("deepseek/deepseek-v4-pro")).toEqual({
-      input: 0.66,
-      output: 1.98,
-      cacheRead: 0.022,
-      cacheWrite: 0,
-    });
-    expect(costFor("deepseek/deepseek-v4-flash")).toEqual({
-      input: 0.22,
-      output: 0.66,
-      cacheRead: 0.007,
-      cacheWrite: 0,
-    });
-    expect(costFor("deepseek/deepseek-v4-flash-vision-exp")).toEqual({
-      input: 0.22,
-      output: 0.66,
-      cacheRead: 0.007,
-      cacheWrite: 0,
-    });
-    expect(costFor("MiniMaxAI/MiniMax-M3")).toEqual({
-      input: 0.3,
-      output: 1.2,
-      cacheRead: 0.06,
-      cacheWrite: 0,
-    });
-    expect(costFor("xiaomi/mimo-v2.5-pro")).toEqual({
-      input: 0.435,
-      output: 0.87,
-      cacheRead: 0.0036,
-      cacheWrite: 0,
-    });
-    expect(costFor("xiaomi/mimo-v2.5")).toEqual({
-      input: 0.14,
-      output: 0.28,
-      cacheRead: 0.0028,
-      cacheWrite: 0,
-    });
-    expect(costFor("z-ai/glm-5.3-flash")).toEqual({
-      input: 0.15,
-      output: 0.5,
-      cacheRead: 0.03,
-      cacheWrite: 0,
-    });
-    expect(costFor("zai-org/GLM-5.3")).toEqual({
-      input: 1.4,
-      output: 4.4,
-      cacheRead: 0.26,
-      cacheWrite: 0,
-    });
-    expect(costFor("Qwen/Qwen3.8-27B")).toEqual({
-      input: 0.4,
-      output: 3,
-      cacheRead: 0.04,
-      cacheWrite: 0,
-    });
-    expect(costFor("Qwen/Qwen3.8-Flash")).toEqual({
-      input: 0.16,
-      output: 0.47,
-      cacheRead: 0.016,
-      cacheWrite: 0,
-    });
-    expect(costFor("tencent/hy4-preview")).toEqual({
-      input: 0.834,
-      output: 2.501,
-      cacheRead: 0.042,
-      cacheWrite: 0,
-    });
-    expect(costFor("google/gemini-3.7-flash")).toEqual({
-      input: 0.75,
-      output: 3.75,
-      cacheRead: 0.075,
-      cacheWrite: 0.04167,
-    });
-    expect(costFor("xai/grok-4.6")).toEqual({
-      input: 2,
-      output: 6,
-      cacheRead: 0.5,
-      cacheWrite: 0,
-    });
-    expect(costFor("minimax/minimax-m3-free")).toEqual({
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-    });
-    expect(costFor("minimax/minimax-m2.7-free")).toEqual({
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-    });
+    const expectedCosts = {
+      "claude-sonnet-5": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+      "gpt-5.6-terra": {
+        input: 2,
+        output: 12,
+        cacheRead: 0.2,
+        cacheWrite: 2.5,
+        tiers: [{ inputTokensAbove: 272_000, input: 4, output: 18, cacheRead: 0.4, cacheWrite: 5 }],
+      },
+      "gpt-5.6-luna": {
+        input: 0.2,
+        output: 1.2,
+        cacheRead: 0.02,
+        cacheWrite: 0.25,
+        tiers: [
+          { inputTokensAbove: 272_000, input: 0.4, output: 1.8, cacheRead: 0.04, cacheWrite: 0.5 },
+        ],
+      },
+      "deepseek/deepseek-v4-pro": { input: 0.66, output: 1.98, cacheRead: 0.022, cacheWrite: 0 },
+      "deepseek/deepseek-v4-flash": { input: 0.22, output: 0.66, cacheRead: 0.007, cacheWrite: 0 },
+      "deepseek/deepseek-v4-flash-vision-exp": {
+        input: 0.22,
+        output: 0.66,
+        cacheRead: 0.007,
+        cacheWrite: 0,
+      },
+      "MiniMaxAI/MiniMax-M3": { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0 },
+      "xiaomi/mimo-v2.5-pro": { input: 0.435, output: 0.87, cacheRead: 0.0036, cacheWrite: 0 },
+      "xiaomi/mimo-v2.5": { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0 },
+      "z-ai/glm-5.3-flash": { input: 0.15, output: 0.5, cacheRead: 0.03, cacheWrite: 0 },
+      "zai-org/GLM-5.3": { input: 1.4, output: 4.4, cacheRead: 0.26, cacheWrite: 0 },
+      "Qwen/Qwen3.8-27B": { input: 0.4, output: 3, cacheRead: 0.04, cacheWrite: 0 },
+      "Qwen/Qwen3.8-Flash": { input: 0.16, output: 0.47, cacheRead: 0.016, cacheWrite: 0 },
+      "tencent/hy4-preview": { input: 0.834, output: 2.501, cacheRead: 0.042, cacheWrite: 0 },
+      "google/gemini-3.7-flash": {
+        input: 0.75,
+        output: 3.75,
+        cacheRead: 0.075,
+        cacheWrite: 0.04167,
+      },
+      "xai/grok-4.6": { input: 2, output: 6, cacheRead: 0.5, cacheWrite: 0 },
+      "minimax/minimax-m3-free": { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      "minimax/minimax-m2.7-free": { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    };
+
+    for (const [id, expected] of Object.entries(expectedCosts)) {
+      expect(costFor(id), id).toEqual(expected);
+    }
   });
 
   it("uses Pi metadata while preserving Command identity and context", () => {
