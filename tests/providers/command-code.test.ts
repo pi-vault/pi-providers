@@ -655,16 +655,42 @@ describe("Command Code live catalog", () => {
         ],
       },
     ],
-    ["blank ID", { object: "list", data: [{ id: "   ", name: "Name", context_length: 1000 }] }],
-    ["blank name", { object: "list", data: [{ id: "id", name: "\t", context_length: 1000 }] }],
-    ["zero context", { object: "list", data: [{ id: "id", name: "Name", context_length: 0 }] }],
+    [
+      "blank ID",
+      {
+        object: "list",
+        data: [
+          { id: "   ", name: "Name", context_length: 1000, supported_endpoints: ["/messages"] },
+        ],
+      },
+    ],
+    [
+      "blank name",
+      {
+        object: "list",
+        data: [{ id: "id", name: "\t", context_length: 1000, supported_endpoints: ["/messages"] }],
+      },
+    ],
+    [
+      "zero context",
+      {
+        object: "list",
+        data: [{ id: "id", name: "Name", context_length: 0, supported_endpoints: ["/messages"] }],
+      },
+    ],
     [
       "negative context",
-      { object: "list", data: [{ id: "id", name: "Name", context_length: -1 }] },
+      {
+        object: "list",
+        data: [{ id: "id", name: "Name", context_length: -1, supported_endpoints: ["/messages"] }],
+      },
     ],
     [
       "fractional context",
-      { object: "list", data: [{ id: "id", name: "Name", context_length: 1.5 }] },
+      {
+        object: "list",
+        data: [{ id: "id", name: "Name", context_length: 1.5, supported_endpoints: ["/messages"] }],
+      },
     ],
     [
       "wrong object",

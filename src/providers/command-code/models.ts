@@ -270,7 +270,7 @@ export const COMMAND_CODE_CATALOG: readonly CommandCodeCatalogRecord[] =
         : ["/chat/completions", "/responses"],
   }));
 
-type CommandCodeCatalogId = (typeof COMMAND_CODE_CATALOG)[number]["id"];
+type CommandCodeCatalogId = (typeof COMMAND_CODE_CATALOG_SNAPSHOT)[number]["id"];
 
 // Snapshot source: https://commandcode.ai/docs/resources/pricing-limits
 // Effective rates billed 2026-08-29, USD per 1M tokens.
