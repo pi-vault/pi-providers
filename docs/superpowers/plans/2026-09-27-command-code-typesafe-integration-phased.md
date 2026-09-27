@@ -4,7 +4,7 @@
 
 **Goal:** Execute the approved Command Code refresh and TypeSafe integration in atomic increments, from the smallest provider-local change to release verification.
 
-**Source plan:** [2026-09-27-command-code-typesafe-integration.md](./2026-09-27-command-code-typesafe-integration.md). That file is authoritative and must remain unchanged.
+**Source plan:** [2026-09-27-command-code-typesafe-integration.md](./2026-09-27-command-code-typesafe-integration.md) defines the overall integration. The standalone phase plans are authoritative for phase-specific interfaces, fixtures, pricing, and acceptance checks.
 
 **Execution order:** Each phase is independently testable. Complete the previous phase’s verification before starting the next.
 
@@ -12,13 +12,13 @@
 
 ### Phase 1 — Command Code catalog and routing
 
-Updates the existing provider’s catalog contract, endpoint-aware routing, bundled 82-model snapshot, and dated pricing. Result: Command Code continues serving chat requests with current model metadata and its focused test suite passes.
+Updates the existing provider’s catalog contract, validates `supported_endpoints`, routes from endpoint declarations, refreshes the bundled 82-model snapshot, and pins the selected pricing policy. `/messages` takes precedence when both supported chat routes appear; `/responses`-only records are skipped. Result: Command Code serves the current chat catalog and retains cached data after malformed or unusable refreshes.
 
 Plan: [phase 1](./2026-09-27-command-code-typesafe-phase-1-catalog.md)
 
 ### Phase 2 — TypeSafe auth provider and decision tool
 
-Adds the auth-only `typesafe` provider and `typesafe_decide` tool with direct TypeSafe calls and automatic Command Code `/systemone` fallback. Result: the new module can be registered and exercised through mocked HTTP tests without adding dependencies.
+Requires a design refresh before implementation: the referenced Pi package now exposes a native TypeSafe classifier provider and System One API, so the auth-only provider/tool boundary in the existing Phase 2 plan may duplicate upstream capability. Keep this phase after Phase 1, but do not treat its current plan as implementation-ready.
 
 Plan: [phase 2](./2026-09-27-command-code-typesafe-phase-2-typesafe-tool.md)
 
@@ -39,8 +39,7 @@ Plan: [phase 4](./2026-09-27-command-code-typesafe-phase-4-verification.md)
 - Keep Node `>=24.15.0` and existing Pi peer dependencies.
 - Use native `fetch`, TypeBox, and existing Pi credential/auth APIs; add no SDK or runtime dependency.
 - Jev is never a selectable chat model.
-- Keep Command Code non-Claude models on Chat Completions; do not add Responses API support.
+- Route Command Code models from `supported_endpoints`; keep Chat Completions as the only OpenAI implementation and do not add Responses API support.
 - Prefer direct TypeSafe when configured; Command Code is the sole fallback.
 - Never send `x-cmd-zdr` to System One requests.
 - Do not bump the package version outside the release workflow.
-

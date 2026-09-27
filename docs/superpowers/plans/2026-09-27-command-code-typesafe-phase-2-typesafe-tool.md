@@ -8,6 +8,8 @@
 
 **Usable result:** The exported provider and registration function can be exercised independently through mocked HTTP and Pi extension tests.
 
+**Status:** Needs replan before execution. The current `/Users/lanh/Developer/pi-packages/pi` checkout exposes a native `typesafe` classifier provider and System One API; reconcile that upstream interface before creating a duplicate auth-only provider.
+
 **Files:**
 
 - Create: `src/providers/typesafe.ts`
@@ -29,4 +31,3 @@
 - [ ] Use a 10-second abortable request per backend. Fall back only for missing credentials, `401/403`, `429`, `529`, `5xx`, timeout, transport, or malformed-success failures. Never fall back after cancellation or `400/422` validation failures, and never send `x-cmd-zdr`.
 - [ ] Re-run the focused tests and confirm successful results identify the backend while errors omit secrets.
 - [ ] Commit with `git add src/providers/typesafe.ts tests/providers/typesafe.test.ts && git commit -m "feat: add typesafe decision tool"`.
-

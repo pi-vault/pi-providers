@@ -4,7 +4,7 @@
 
 **Goal:** Refresh the Command Code provider and add a TypeSafe Jev decision tool with direct TypeSafe access and automatic Command Code fallback.
 
-**Architecture:** Keep Command Code as a conversational provider using Anthropic Messages for `/messages` models and OpenAI Chat Completions for other supported models. Add an auth-only native `typesafe` provider with no model-picker entries, plus an LLM-callable `typesafe_decide` tool that calls TypeSafe directly first and Command Code’s `/systemone` endpoint second.
+**Architecture:** Keep Command Code as a conversational provider using the catalog’s endpoint declarations: Anthropic Messages for `/messages` models and OpenAI Chat Completions for `/chat/completions` models. Add a TypeSafe decision capability that calls TypeSafe directly first and Command Code’s `/systemone` endpoint second.
 
 **Tech Stack:** TypeScript, Pi `ExtensionAPI`, `@earendil-works/pi-ai/compat`, TypeBox, native `fetch`, Vitest, Biome.
 
@@ -15,7 +15,7 @@
 - Keep Node `>=24.15.0` and existing Pi peer dependencies.
 - Do not add an SDK or runtime dependency; use native `fetch` and existing Pi credential/auth APIs.
 - Jev must not be registered as a selectable chat model.
-- Keep Command Code on Chat Completions for non-Claude models; do not add Responses API support in this change.
+- Route Command Code chat models from `supported_endpoints`; keep Chat Completions as the only OpenAI implementation and do not add Responses API support in this change.
 - Direct TypeSafe is preferred when configured; Command Code is the sole fallback.
 - Never send `x-cmd-zdr` to either System One request.
 - Do not bump the package version outside the release workflow.
@@ -32,6 +32,8 @@
 
 ### Task 1: Refresh Command Code catalog metadata and snapshot
 
+The complete Phase 1 contract, exact September 27, 2026 catalog delta, pricing policy, endpoint distribution, and acceptance tests live in [the standalone Phase 1 plan](./2026-09-27-command-code-typesafe-phase-1-catalog.md). That plan is the source of truth for this task.
+
 **Files:**
 
 - Modify: `src/providers/command-code/models.ts`
@@ -41,16 +43,18 @@
 **Interfaces:**
 
 - Extend `CommandCodeCatalogRecord` with `supportedEndpoints: readonly string[]`.
-- Keep `modelFromCatalogRecord(record)` as the conversion boundary. It must choose Anthropic Messages when `/messages` is advertised, otherwise OpenAI Completions when `/chat/completions` is advertised.
-- The live parser must validate endpoint metadata, skip valid records with neither Pi-supported endpoint, and reject malformed records as a catalog refresh error.
+- Route by endpoint metadata, with `/messages` taking precedence when both supported routes appear.
+- Skip valid records without `/messages` or `/chat/completions`; reject malformed endpoint metadata and zero-usable catalogs while retaining cached models.
 
 - [ ] **Step 1: Add failing catalog tests** for endpoint-aware routing, unsupported-endpoint filtering, malformed endpoint metadata, the current 82-record snapshot, the 22 current additions, removal of the two expired MiniMax free IDs, and current price entries/free-model exceptions.
 - [ ] **Step 2: Run the focused tests** with `pnpm vitest run tests/providers/command-code.test.ts`; confirm the new assertions fail against the prefix-based 62-model implementation.
-- [ ] **Step 3: Implement endpoint-aware catalog conversion** and update the bundled records to the live 2026-09-27 catalog. Refresh prices from Command’s pricing page, preserve donor metadata and the existing unknown-cost fallback, and leave refresh persistence/throttling unchanged.
+- [ ] **Step 3: Implement the standalone Phase 1 plan’s endpoint validation, filtering, endpoint-aware conversion, 82-record snapshot, and selected pricing policy.**
 - [ ] **Step 4: Run the focused tests** again and confirm all catalog, request-routing, cache-retention, and refresh tests pass.
 - [ ] **Step 5: Commit** with `git add src/providers/command-code.ts src/providers/command-code/models.ts tests/providers/command-code.test.ts && git commit -m "feat: refresh command code model catalog"`.
 
 ### Task 2: Add the TypeSafe auth provider and decision tool
+
+**Status:** Needs replan before execution. The current `/Users/lanh/Developer/pi-packages/pi` checkout exposes a native TypeSafe classifier provider and System One API; reconcile that upstream interface before creating a duplicate auth-only provider. See the standalone Phase 2 plan.
 
 **Files:**
 
