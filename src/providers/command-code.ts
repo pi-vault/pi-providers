@@ -31,7 +31,7 @@ function parseCommandCodeModels(value: unknown) {
   const records: CommandCodeCatalogRecord[] = payload.data.map((entry) => {
     if (!entry || typeof entry !== "object") throw new Error("Invalid Command Code model catalog");
 
-    const { id, name, context_length } = entry as Record<string, unknown>;
+    const { id, name, context_length, supported_endpoints } = entry as Record<string, unknown>;
     if (
       typeof id !== "string" ||
       !id.trim() ||
@@ -39,19 +39,30 @@ function parseCommandCodeModels(value: unknown) {
       !name.trim() ||
       typeof context_length !== "number" ||
       !Number.isInteger(context_length) ||
-      context_length <= 0
+      context_length <= 0 ||
+      !Array.isArray(supported_endpoints) ||
+      !supported_endpoints.every((endpoint) => typeof endpoint === "string")
     ) {
       throw new Error("Invalid Command Code model catalog");
     }
 
-    return { id, name, contextWindow: context_length };
+    return { id, name, contextWindow: context_length, supportedEndpoints: supported_endpoints };
   });
 
   if (new Set(records.map((record) => record.id)).size !== records.length) {
     throw new Error("Invalid Command Code model catalog: duplicate IDs");
   }
 
-  return records.map(modelFromCatalogRecord);
+  const chatRecords = records.filter((record) =>
+    record.supportedEndpoints.some(
+      (endpoint) => endpoint === "/messages" || endpoint === "/chat/completions",
+    ),
+  );
+  if (chatRecords.length === 0) {
+    throw new Error("Invalid Command Code model catalog: no supported chat endpoints");
+  }
+
+  return chatRecords.map(modelFromCatalogRecord);
 }
 
 async function fetchCommandCodeModels(context: RefreshModelsContext) {
@@ -66,6 +77,7 @@ async function fetchCommandCodeModels(context: RefreshModelsContext) {
 
 export function createCommandCodeProvider(): Provider<"anthropic-messages" | "openai-completions"> {
   const headers = process.env.CMD_ZDR === "1" ? { "x-cmd-zdr": "1" } : undefined;
+  let authoritativeModelIds: ReadonlySet<string> | undefined;
 
   const provider = createProvider({
     id: "command-code",
@@ -81,8 +93,13 @@ export function createCommandCodeProvider(): Provider<"anthropic-messages" | "op
   });
 
   const generatedGetModels = provider.getModels;
-  provider.getModels = () =>
-    headers ? generatedGetModels().map((model) => ({ ...model, headers })) : generatedGetModels();
+  provider.getModels = () => {
+    const modelIds = authoritativeModelIds;
+    const models = modelIds
+      ? generatedGetModels().filter((model) => modelIds.has(model.id))
+      : generatedGetModels();
+    return headers ? models.map((model) => ({ ...model, headers })) : models;
+  };
 
   const generatedRefresh = provider.refreshModels;
   provider.refreshModels = async (context) => {
@@ -95,7 +112,26 @@ export function createCommandCodeProvider(): Provider<"anthropic-messages" | "op
       return;
     }
     try {
-      await generatedRefresh?.(context);
+      await generatedRefresh?.({
+        ...context,
+        publish: (publication) =>
+          context.publish({
+            ...publication,
+            update: publication.update
+              ? () => {
+                  publication.update?.();
+                  const publishedModels = publication.persist?.models ?? context.stored?.models;
+                  if (publishedModels) {
+                    authoritativeModelIds = new Set(
+                      publishedModels
+                        .filter((model) => model.provider === provider.id)
+                        .map((model) => model.id),
+                    );
+                  }
+                }
+              : undefined,
+          }),
+      });
     } catch (error) {
       if (context.allowNetwork && !context.signal.aborted) {
         await context.publish({

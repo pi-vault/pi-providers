@@ -17,7 +17,14 @@ import {
 
 const validPayload = {
   object: "list",
-  data: [{ id: "new-model", name: "New Model", context_length: 32_000 }],
+  data: [
+    {
+      id: "new-model",
+      name: "New Model",
+      context_length: 32_000,
+      supported_endpoints: ["/chat/completions"],
+    },
+  ],
 };
 
 function jsonResponse(value: unknown, status = 200): Response {
@@ -95,6 +102,7 @@ describe("Command Code catalog conversion", () => {
         id: "claude-sonnet-5",
         name: "Claude Sonnet 5",
         contextWindow: 1_000_000,
+        supportedEndpoints: ["/messages"],
       }),
     ).toMatchObject({
       id: "claude-sonnet-5",
@@ -110,6 +118,7 @@ describe("Command Code catalog conversion", () => {
         id: "deepseek/deepseek-v4-flash",
         name: "DeepSeek V4 Flash",
         contextWindow: 1_000_000,
+        supportedEndpoints: ["/chat/completions"],
       }).api,
     ).toBe("openai-completions");
   });
@@ -120,6 +129,7 @@ describe("Command Code catalog conversion", () => {
         id: "new/vendor-model",
         name: "New Vendor Model",
         contextWindow: 32_000,
+        supportedEndpoints: ["/chat/completions"],
       }),
     ).toMatchObject({
       reasoning: false,
@@ -129,44 +139,117 @@ describe("Command Code catalog conversion", () => {
     });
   });
 
-  it("bundles the captured Command Code catalog", () => {
-    const newIds = [
-      "deepseek/deepseek-v4-flash-vision-exp",
-      "z-ai/glm-5.3-flash",
-      "zai-org/GLM-5.3",
-      "minimax/minimax-m3-free",
-      "minimax/minimax-m2.7-free",
-      "Qwen/Qwen3.8-27B",
-      "Qwen/Qwen3.8-Flash",
-      "tencent/hy4-preview",
-      "google/gemini-3.7-flash",
-      "xai/grok-4.6",
-    ];
+  it("routes a non-Claude ID to Anthropic Messages when /messages is declared", () => {
+    expect(
+      modelFromCatalogRecord({
+        id: "vendor/message-model",
+        name: "Message Model",
+        contextWindow: 32_000,
+        supportedEndpoints: ["/messages"],
+      }).api,
+    ).toBe("anthropic-messages");
+  });
 
-    expect(COMMAND_CODE_CATALOG).toHaveLength(62);
-    expect(new Set(COMMAND_CODE_CATALOG.map((model) => model.id)).size).toBe(62);
+  it("routes a Claude-looking ID to OpenAI Completions when /chat/completions is declared", () => {
+    expect(
+      modelFromCatalogRecord({
+        id: "claude-not-messages",
+        name: "Claude-looking Chat Model",
+        contextWindow: 32_000,
+        supportedEndpoints: ["/chat/completions"],
+      }).api,
+    ).toBe("openai-completions");
+  });
+
+  it("prefers Anthropic Messages when both chat endpoints are declared", () => {
+    expect(
+      modelFromCatalogRecord({
+        id: "vendor/both-endpoints",
+        name: "Both Endpoints",
+        contextWindow: 32_000,
+        supportedEndpoints: ["/chat/completions", "/messages"],
+      }).api,
+    ).toBe("anthropic-messages");
+  });
+
+  it("bundles the captured Command Code catalog", () => {
+    const addedIds = [
+      "claude-fable-5-1",
+      "claude-opus-5-5",
+      "gpt-6-astra",
+      "gpt-6-sol",
+      "gpt-6-luna",
+      "deepseek/deepseek-v4-flash-fast",
+      "deepseek/deepseek-v4.1-flash",
+      "z-ai/glm-5.3-flashx",
+      "xiaomi/mimo-v2.6-pro",
+      "xiaomi/mimo-v2.6-pro-ultraspeed",
+      "xiaomi/mimo-v2.6-flash",
+      "Qwen/Qwen3.8-Omni-Flash",
+      "Qwen/Qwen3.8-Max-0902",
+      "meituan/LongCat-2.0",
+      "stepfun/Step-5-Preview",
+      "google/gemini-3.8-flash",
+      "stealth/space-bunny-alpha",
+      "stealth/pixel-canary",
+      "inclusionai/ling-3.0-flash-sante:free",
+      "meta/muse-spark-1.3",
+      "meta/muse-spark-1.3-contributor",
+      "xai/grok-4.7",
+    ];
+    const ids = COMMAND_CODE_CATALOG.map((model) => model.id);
+
+    expect(COMMAND_CODE_CATALOG).toHaveLength(82);
+    expect(new Set(ids).size).toBe(82);
     expect(
       COMMAND_CODE_CATALOG.every(
         (model) =>
           model.id.trim().length > 0 &&
           model.name.trim().length > 0 &&
           Number.isInteger(model.contextWindow) &&
-          model.contextWindow > 0,
+          model.contextWindow > 0 &&
+          model.supportedEndpoints.length > 0 &&
+          model.supportedEndpoints.every((endpoint) => typeof endpoint === "string"),
       ),
     ).toBe(true);
-    expect(COMMAND_CODE_CATALOG.map((model) => model.id)).toEqual(expect.arrayContaining(newIds));
+    expect(ids).toEqual(expect.arrayContaining(addedIds));
+    expect(ids).not.toEqual(
+      expect.arrayContaining(["minimax/minimax-m3-free", "minimax/minimax-m2.7-free"]),
+    );
+    expect(
+      COMMAND_CODE_CATALOG.filter((model) => model.supportedEndpoints.includes("/messages")),
+    ).toHaveLength(9);
+    expect(
+      COMMAND_CODE_CATALOG.filter(
+        (model) =>
+          model.supportedEndpoints.length === 1 &&
+          model.supportedEndpoints[0] === "/chat/completions",
+      ),
+    ).toHaveLength(8);
+    expect(
+      COMMAND_CODE_CATALOG.filter(
+        (model) =>
+          model.supportedEndpoints.length === 2 &&
+          model.supportedEndpoints.includes("/chat/completions") &&
+          model.supportedEndpoints.includes("/responses"),
+      ),
+    ).toHaveLength(65);
     expect(COMMAND_CODE_CATALOG.find((model) => model.id === "gpt-5.5")?.contextWindow).toBe(
       400_000,
     );
     expect(
+      COMMAND_CODE_CATALOG.find((model) => model.id === "stepfun/Step-3.5-Flash")?.contextWindow,
+    ).toBe(262_144);
+    expect(
       COMMAND_CODE_CATALOG.find((model) => model.id === "deepseek/deepseek-v4-pro")?.name,
     ).toBe("DeepSeek V4 Pro (latest)");
-    expect(commandCodeModels).toHaveLength(62);
+    expect(commandCodeModels).toHaveLength(82);
 
     const zeroCostIds = new Set([
       "poolside/laguna-s-2.1-free",
-      "minimax/minimax-m3-free",
-      "minimax/minimax-m2.7-free",
+      "stealth/space-bunny-alpha",
+      "stealth/pixel-canary",
+      "inclusionai/ling-3.0-flash-sante:free",
     ]);
 
     expect(
@@ -189,10 +272,55 @@ describe("Command Code catalog conversion", () => {
 
   it("uses Command’s stable and tiered pricing", () => {
     const costFor = (id: string) =>
-      modelFromCatalogRecord({ id, name: id, contextWindow: 1_000_000 }).cost;
+      modelFromCatalogRecord({
+        id,
+        name: id,
+        contextWindow: 1_000_000,
+        supportedEndpoints: ["/chat/completions"],
+      }).cost;
 
     const expectedCosts = {
       "claude-sonnet-5": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+      "claude-fable-5-1": { input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5 },
+      "claude-opus-5-5": { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 },
+      "gpt-6-astra": {
+        input: 10,
+        output: 50,
+        cacheRead: 1,
+        cacheWrite: 12.5,
+        tiers: [{ inputTokensAbove: 272_000, input: 20, output: 75, cacheRead: 2, cacheWrite: 25 }],
+      },
+      "gpt-6-sol": {
+        input: 2,
+        output: 10,
+        cacheRead: 0.2,
+        cacheWrite: 2.5,
+        tiers: [{ inputTokensAbove: 272_000, input: 4, output: 15, cacheRead: 0.4, cacheWrite: 5 }],
+      },
+      "gpt-6-luna": {
+        input: 0.1,
+        output: 0.5,
+        cacheRead: 0.01,
+        cacheWrite: 0.125,
+        tiers: [
+          {
+            inputTokensAbove: 272_000,
+            input: 0.2,
+            output: 0.75,
+            cacheRead: 0.02,
+            cacheWrite: 0.25,
+          },
+        ],
+      },
+      "gpt-5.6-sol": {
+        input: 5,
+        output: 30,
+        cacheRead: 0.5,
+        cacheWrite: 6.25,
+        tiers: [
+          { inputTokensAbove: 272_000, input: 10, output: 45, cacheRead: 1, cacheWrite: 12.5 },
+        ],
+      },
       "gpt-5.6-terra": {
         input: 2,
         output: 12,
@@ -210,30 +338,102 @@ describe("Command Code catalog conversion", () => {
         ],
       },
       "deepseek/deepseek-v4-pro": { input: 0.66, output: 1.98, cacheRead: 0.022, cacheWrite: 0 },
-      "deepseek/deepseek-v4-flash": { input: 0.22, output: 0.66, cacheRead: 0.007, cacheWrite: 0 },
+      "deepseek/deepseek-v4-flash": { input: 0.15, output: 0.6, cacheRead: 0.003, cacheWrite: 0 },
       "deepseek/deepseek-v4-flash-vision-exp": {
-        input: 0.22,
-        output: 0.66,
-        cacheRead: 0.007,
+        input: 0.15,
+        output: 0.6,
+        cacheRead: 0.003,
+        cacheWrite: 0,
+      },
+      "deepseek/deepseek-v4-flash-fast": {
+        input: 0.28,
+        output: 0.56,
+        cacheRead: 0.07,
+        cacheWrite: 0,
+      },
+      "deepseek/deepseek-v4.1-flash": {
+        input: 0.15,
+        output: 0.6,
+        cacheRead: 0.003,
         cacheWrite: 0,
       },
       "MiniMaxAI/MiniMax-M3": { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0 },
+      "z-ai/glm-5.3-flashx": { input: 0.37, output: 1.25, cacheRead: 0.075, cacheWrite: 0 },
+      "xiaomi/mimo-v2.6-pro": { input: 0.435, output: 0.87, cacheRead: 0.0036, cacheWrite: 0 },
+      "xiaomi/mimo-v2.6-pro-ultraspeed": {
+        input: 4.35,
+        output: 8.7,
+        cacheRead: 0.036,
+        cacheWrite: 0,
+      },
+      "xiaomi/mimo-v2.6-flash": { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0 },
       "xiaomi/mimo-v2.5-pro": { input: 0.435, output: 0.87, cacheRead: 0.0036, cacheWrite: 0 },
       "xiaomi/mimo-v2.5": { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0 },
+      "Qwen/Qwen3.8-Omni-Flash": { input: 0.15, output: 0.47, cacheRead: 0.016, cacheWrite: 0 },
+      "Qwen/Qwen3.8-Max-0902": { input: 2, output: 6, cacheRead: 0.25, cacheWrite: 0 },
       "z-ai/glm-5.3-flash": { input: 0.15, output: 0.5, cacheRead: 0.03, cacheWrite: 0 },
       "zai-org/GLM-5.3": { input: 1.4, output: 4.4, cacheRead: 0.26, cacheWrite: 0 },
       "Qwen/Qwen3.8-27B": { input: 0.4, output: 3, cacheRead: 0.04, cacheWrite: 0 },
       "Qwen/Qwen3.8-Flash": { input: 0.16, output: 0.47, cacheRead: 0.016, cacheWrite: 0 },
-      "tencent/hy4-preview": { input: 0.834, output: 2.501, cacheRead: 0.042, cacheWrite: 0 },
-      "google/gemini-3.7-flash": {
-        input: 0.75,
-        output: 3.75,
-        cacheRead: 0.075,
-        cacheWrite: 0.04167,
+      "Qwen/Qwen3.7-Plus": {
+        input: 0.4,
+        output: 1.6,
+        cacheRead: 0.08,
+        cacheWrite: 0.5,
+        tiers: [
+          { inputTokensAbove: 256_000, input: 1.2, output: 4.8, cacheRead: 0.24, cacheWrite: 1.5 },
+        ],
       },
-      "xai/grok-4.6": { input: 2, output: 6, cacheRead: 0.5, cacheWrite: 0 },
-      "minimax/minimax-m3-free": { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      "minimax/minimax-m2.7-free": { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      "Qwen/Qwen3.7-Flash": {
+        input: 0.03,
+        output: 0.13,
+        cacheRead: 0.006,
+        cacheWrite: 0.038,
+        tiers: [
+          { inputTokensAbove: 32_000, input: 0.1, output: 0.4, cacheRead: 0.02, cacheWrite: 0.125 },
+          { inputTokensAbove: 256_000, input: 0.2, output: 0.8, cacheRead: 0.04, cacheWrite: 0.25 },
+        ],
+      },
+      "meituan/LongCat-2.0": { input: 0.3, output: 1.2, cacheRead: 0.006, cacheWrite: 0 },
+      "stepfun/Step-5-Preview": { input: 1, output: 2.7, cacheRead: 0.05, cacheWrite: 0 },
+      "stepfun/Step-3.5-Flash": { input: 0.09, output: 0.3, cacheRead: 0.02, cacheWrite: 0 },
+      "tencent/hy4-preview": { input: 0.834, output: 2.501, cacheRead: 0.042, cacheWrite: 0 },
+      "google/gemini-3.8-flash": { input: 1.5, output: 7.5, cacheRead: 0.15, cacheWrite: 0 },
+      "google/gemini-3.7-flash": {
+        input: 1.5,
+        output: 7.5,
+        cacheRead: 0.15,
+        cacheWrite: 0.08334,
+      },
+      "stealth/space-bunny-alpha": { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      "stealth/pixel-canary": { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      "inclusionai/ling-3.0-flash-sante:free": {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+      },
+      "meta/muse-spark-1.3": { input: 1.25, output: 4.25, cacheRead: 0.15, cacheWrite: 0 },
+      "meta/muse-spark-1.3-contributor": {
+        input: 0.1,
+        output: 0.2,
+        cacheRead: 0.002,
+        cacheWrite: 0,
+      },
+      "xai/grok-4.6": {
+        input: 2,
+        output: 6,
+        cacheRead: 0.5,
+        cacheWrite: 0,
+        tiers: [{ inputTokensAbove: 200_000, input: 4, output: 12, cacheRead: 1, cacheWrite: 0 }],
+      },
+      "xai/grok-4.7": {
+        input: 2,
+        output: 6,
+        cacheRead: 0.5,
+        cacheWrite: 0,
+        tiers: [{ inputTokensAbove: 200_000, input: 4, output: 12, cacheRead: 1, cacheWrite: 0 }],
+      },
     };
 
     for (const [id, expected] of Object.entries(expectedCosts)) {
@@ -247,6 +447,7 @@ describe("Command Code catalog conversion", () => {
         id: "claude-sonnet-5",
         name: "Command Claude",
         contextWindow: 900_000,
+        supportedEndpoints: ["/messages"],
       }),
     ).toMatchObject({
       name: "Command Claude",
@@ -270,7 +471,15 @@ describe("Command Code catalog conversion", () => {
   ])(
     "uses Pi metadata for current live vision models: %s",
     (id, name, contextWindow, maxTokens) => {
-      expect(modelFromCatalogRecord({ id, name, contextWindow }), id).toMatchObject({
+      expect(
+        modelFromCatalogRecord({
+          id,
+          name,
+          contextWindow,
+          supportedEndpoints: ["/chat/completions"],
+        }),
+        id,
+      ).toMatchObject({
         reasoning: true,
         input: ["text", "image"],
         maxTokens,
@@ -284,6 +493,7 @@ describe("Command Code catalog conversion", () => {
         id: "Qwen/Qwen3.7-Flash",
         name: "Qwen 3.7 Flash",
         contextWindow: 200_000,
+        supportedEndpoints: ["/chat/completions"],
       }),
     ).toMatchObject({
       reasoning: true,
@@ -300,7 +510,7 @@ describe("Command Code catalog conversion", () => {
       name: "Command Code",
       baseUrl: "https://api.commandcode.ai/provider/v1",
     });
-    expect(provider.getModels()).toHaveLength(62);
+    expect(provider.getModels()).toHaveLength(82);
     expect(new Set(provider.getModels().map((model) => model.api))).toEqual(
       new Set(["anthropic-messages", "openai-completions"]),
     );
@@ -396,21 +606,91 @@ describe("Command Code live catalog", () => {
       {
         object: "list",
         data: [
-          { id: "same", name: "One", context_length: 1000 },
-          { id: "same", name: "Two", context_length: 1000 },
+          {
+            id: "same",
+            name: "One",
+            context_length: 1000,
+            supported_endpoints: ["/chat/completions"],
+          },
+          {
+            id: "same",
+            name: "Two",
+            context_length: 1000,
+            supported_endpoints: ["/chat/completions"],
+          },
         ],
       },
     ],
-    ["blank ID", { object: "list", data: [{ id: "   ", name: "Name", context_length: 1000 }] }],
-    ["blank name", { object: "list", data: [{ id: "id", name: "\t", context_length: 1000 }] }],
-    ["zero context", { object: "list", data: [{ id: "id", name: "Name", context_length: 0 }] }],
+    [
+      "missing endpoint metadata",
+      { object: "list", data: [{ id: "id", name: "Name", context_length: 1000 }] },
+    ],
+    [
+      "non-array endpoint metadata",
+      {
+        object: "list",
+        data: [{ id: "id", name: "Name", context_length: 1000, supported_endpoints: "/messages" }],
+      },
+    ],
+    [
+      "non-string endpoint metadata",
+      {
+        object: "list",
+        data: [
+          { id: "id", name: "Name", context_length: 1000, supported_endpoints: ["/messages", 1] },
+        ],
+      },
+    ],
+    [
+      "no usable chat endpoints",
+      {
+        object: "list",
+        data: [
+          {
+            id: "responses-only",
+            name: "Responses Only",
+            context_length: 1000,
+            supported_endpoints: ["/responses"],
+          },
+        ],
+      },
+    ],
+    [
+      "blank ID",
+      {
+        object: "list",
+        data: [
+          { id: "   ", name: "Name", context_length: 1000, supported_endpoints: ["/messages"] },
+        ],
+      },
+    ],
+    [
+      "blank name",
+      {
+        object: "list",
+        data: [{ id: "id", name: "\t", context_length: 1000, supported_endpoints: ["/messages"] }],
+      },
+    ],
+    [
+      "zero context",
+      {
+        object: "list",
+        data: [{ id: "id", name: "Name", context_length: 0, supported_endpoints: ["/messages"] }],
+      },
+    ],
     [
       "negative context",
-      { object: "list", data: [{ id: "id", name: "Name", context_length: -1 }] },
+      {
+        object: "list",
+        data: [{ id: "id", name: "Name", context_length: -1, supported_endpoints: ["/messages"] }],
+      },
     ],
     [
       "fractional context",
-      { object: "list", data: [{ id: "id", name: "Name", context_length: 1.5 }] },
+      {
+        object: "list",
+        data: [{ id: "id", name: "Name", context_length: 1.5, supported_endpoints: ["/messages"] }],
+      },
     ],
     [
       "wrong object",
@@ -429,6 +709,70 @@ describe("Command Code live catalog", () => {
     expect(result.errors.get("command-code")).toBeInstanceOf(Error);
     expect(models.getModel("command-code", cached.id)).toEqual(cached);
     expect(stored?.models).toEqual([cached]);
+  });
+
+  it("skips non-chat live records while publishing usable chat models", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({
+        object: "list",
+        data: [
+          {
+            id: "chat-model",
+            name: "Chat Model",
+            context_length: 32_000,
+            supported_endpoints: ["/chat/completions"],
+          },
+          {
+            id: "responses-only",
+            name: "Responses Only",
+            context_length: 32_000,
+            supported_endpoints: ["/responses"],
+          },
+          {
+            id: "unknown-endpoint",
+            name: "Unknown Endpoint",
+            context_length: 32_000,
+            supported_endpoints: ["/future"],
+          },
+        ],
+      }),
+    );
+    const { models } = await createRefreshModels();
+
+    await models.refresh({ providers: ["command-code"], force: true });
+
+    expect(models.getModel("command-code", "chat-model")).toBeDefined();
+    expect(models.getModel("command-code", "responses-only")).toBeUndefined();
+    expect(models.getModel("command-code", "unknown-endpoint")).toBeUndefined();
+  });
+
+  it("removes a bundled model that no longer advertises a chat endpoint", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({
+        object: "list",
+        data: [
+          {
+            id: "claude-sonnet-5",
+            name: "Claude Sonnet 5",
+            context_length: 1_000_000,
+            supported_endpoints: ["/responses"],
+          },
+          {
+            id: "new-model",
+            name: "New Model",
+            context_length: 32_000,
+            supported_endpoints: ["/chat/completions"],
+          },
+        ],
+      }),
+    );
+    const { models } = await createRefreshModels();
+
+    const result = await models.refresh({ providers: ["command-code"], force: true });
+
+    expect(result.errors.size).toBe(0);
+    expect(models.getModel("command-code", "new-model")).toBeDefined();
+    expect(models.getModel("command-code", "claude-sonnet-5")).toBeUndefined();
   });
 
   it("retains the cached catalog for malformed JSON", async () => {
@@ -451,6 +795,7 @@ describe("Command Code live catalog", () => {
 
     expect(fetch).not.toHaveBeenCalled();
     expect(models.getModel("command-code", cached.id)).toEqual(cached);
+    expect(models.getModel("command-code", "claude-sonnet-5")).toBeUndefined();
   });
 
   it("skips a fresh non-forced online refresh without rewriting checkedAt", async () => {
@@ -556,12 +901,19 @@ describe("Command Code live catalog", () => {
     expect(models.getModel("command-code", cached.id)).toEqual(cached);
   });
 
-  it("removes live-only models absent from a later successful catalog", async () => {
+  it("replaces the previous catalog with a later successful catalog", async () => {
     const payloads = [
       validPayload,
       {
         object: "list",
-        data: [{ id: "another-model", name: "Another Model", context_length: 16_000 }],
+        data: [
+          {
+            id: "another-model",
+            name: "Another Model",
+            context_length: 16_000,
+            supported_endpoints: ["/chat/completions"],
+          },
+        ],
       },
     ];
     vi.spyOn(globalThis, "fetch").mockImplementation(async () => jsonResponse(payloads.shift()));
@@ -574,7 +926,7 @@ describe("Command Code live catalog", () => {
     expect(models.getModel("command-code", "another-model")).toMatchObject({
       name: "Another Model",
     });
-    expect(models.getModel("command-code", "claude-sonnet-5")).toBeDefined();
+    expect(models.getModel("command-code", "claude-sonnet-5")).toBeUndefined();
   });
 
   it("persists headerless models and applies ZDR only to each provider instance", async () => {
