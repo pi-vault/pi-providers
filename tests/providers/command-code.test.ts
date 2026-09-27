@@ -173,43 +173,83 @@ describe("Command Code catalog conversion", () => {
   });
 
   it("bundles the captured Command Code catalog", () => {
-    const newIds = [
-      "deepseek/deepseek-v4-flash-vision-exp",
-      "z-ai/glm-5.3-flash",
-      "zai-org/GLM-5.3",
-      "minimax/minimax-m3-free",
-      "minimax/minimax-m2.7-free",
-      "Qwen/Qwen3.8-27B",
-      "Qwen/Qwen3.8-Flash",
-      "tencent/hy4-preview",
-      "google/gemini-3.7-flash",
-      "xai/grok-4.6",
+    const addedIds = [
+      "claude-fable-5-1",
+      "claude-opus-5-5",
+      "gpt-6-astra",
+      "gpt-6-sol",
+      "gpt-6-luna",
+      "deepseek/deepseek-v4-flash-fast",
+      "deepseek/deepseek-v4.1-flash",
+      "z-ai/glm-5.3-flashx",
+      "xiaomi/mimo-v2.6-pro",
+      "xiaomi/mimo-v2.6-pro-ultraspeed",
+      "xiaomi/mimo-v2.6-flash",
+      "Qwen/Qwen3.8-Omni-Flash",
+      "Qwen/Qwen3.8-Max-0902",
+      "meituan/LongCat-2.0",
+      "stepfun/Step-5-Preview",
+      "google/gemini-3.8-flash",
+      "stealth/space-bunny-alpha",
+      "stealth/pixel-canary",
+      "inclusionai/ling-3.0-flash-sante:free",
+      "meta/muse-spark-1.3",
+      "meta/muse-spark-1.3-contributor",
+      "xai/grok-4.7",
     ];
+    const ids = COMMAND_CODE_CATALOG.map((model) => model.id);
 
-    expect(COMMAND_CODE_CATALOG).toHaveLength(62);
-    expect(new Set(COMMAND_CODE_CATALOG.map((model) => model.id)).size).toBe(62);
+    expect(COMMAND_CODE_CATALOG).toHaveLength(82);
+    expect(new Set(ids).size).toBe(82);
     expect(
       COMMAND_CODE_CATALOG.every(
         (model) =>
           model.id.trim().length > 0 &&
           model.name.trim().length > 0 &&
           Number.isInteger(model.contextWindow) &&
-          model.contextWindow > 0,
+          model.contextWindow > 0 &&
+          model.supportedEndpoints.length > 0 &&
+          model.supportedEndpoints.every((endpoint) => typeof endpoint === "string"),
       ),
     ).toBe(true);
-    expect(COMMAND_CODE_CATALOG.map((model) => model.id)).toEqual(expect.arrayContaining(newIds));
+    expect(ids).toEqual(expect.arrayContaining(addedIds));
+    expect(ids).not.toEqual(
+      expect.arrayContaining(["minimax/minimax-m3-free", "minimax/minimax-m2.7-free"]),
+    );
+    expect(
+      COMMAND_CODE_CATALOG.filter((model) => model.supportedEndpoints.includes("/messages")),
+    ).toHaveLength(9);
+    expect(
+      COMMAND_CODE_CATALOG.filter(
+        (model) =>
+          model.supportedEndpoints.length === 1 &&
+          model.supportedEndpoints[0] === "/chat/completions",
+      ),
+    ).toHaveLength(8);
+    expect(
+      COMMAND_CODE_CATALOG.filter(
+        (model) =>
+          model.supportedEndpoints.length === 2 &&
+          model.supportedEndpoints.includes("/chat/completions") &&
+          model.supportedEndpoints.includes("/responses"),
+      ),
+    ).toHaveLength(65);
     expect(COMMAND_CODE_CATALOG.find((model) => model.id === "gpt-5.5")?.contextWindow).toBe(
       400_000,
     );
     expect(
+      COMMAND_CODE_CATALOG.find((model) => model.id === "stepfun/Step-3.5-Flash")?.contextWindow,
+    ).toBe(262_144);
+    expect(
       COMMAND_CODE_CATALOG.find((model) => model.id === "deepseek/deepseek-v4-pro")?.name,
     ).toBe("DeepSeek V4 Pro (latest)");
-    expect(commandCodeModels).toHaveLength(62);
+    expect(commandCodeModels).toHaveLength(82);
 
     const zeroCostIds = new Set([
       "poolside/laguna-s-2.1-free",
-      "minimax/minimax-m3-free",
-      "minimax/minimax-m2.7-free",
+      "stealth/space-bunny-alpha",
+      "stealth/pixel-canary",
+      "inclusionai/ling-3.0-flash-sante:free",
     ]);
 
     expect(
@@ -241,6 +281,46 @@ describe("Command Code catalog conversion", () => {
 
     const expectedCosts = {
       "claude-sonnet-5": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+      "claude-fable-5-1": { input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5 },
+      "claude-opus-5-5": { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 },
+      "gpt-6-astra": {
+        input: 10,
+        output: 50,
+        cacheRead: 1,
+        cacheWrite: 12.5,
+        tiers: [{ inputTokensAbove: 272_000, input: 20, output: 75, cacheRead: 2, cacheWrite: 25 }],
+      },
+      "gpt-6-sol": {
+        input: 2,
+        output: 10,
+        cacheRead: 0.2,
+        cacheWrite: 2.5,
+        tiers: [{ inputTokensAbove: 272_000, input: 4, output: 15, cacheRead: 0.4, cacheWrite: 5 }],
+      },
+      "gpt-6-luna": {
+        input: 0.1,
+        output: 0.5,
+        cacheRead: 0.01,
+        cacheWrite: 0.125,
+        tiers: [
+          {
+            inputTokensAbove: 272_000,
+            input: 0.2,
+            output: 0.75,
+            cacheRead: 0.02,
+            cacheWrite: 0.25,
+          },
+        ],
+      },
+      "gpt-5.6-sol": {
+        input: 5,
+        output: 30,
+        cacheRead: 0.5,
+        cacheWrite: 6.25,
+        tiers: [
+          { inputTokensAbove: 272_000, input: 10, output: 45, cacheRead: 1, cacheWrite: 12.5 },
+        ],
+      },
       "gpt-5.6-terra": {
         input: 2,
         output: 12,
@@ -258,30 +338,102 @@ describe("Command Code catalog conversion", () => {
         ],
       },
       "deepseek/deepseek-v4-pro": { input: 0.66, output: 1.98, cacheRead: 0.022, cacheWrite: 0 },
-      "deepseek/deepseek-v4-flash": { input: 0.22, output: 0.66, cacheRead: 0.007, cacheWrite: 0 },
+      "deepseek/deepseek-v4-flash": { input: 0.15, output: 0.6, cacheRead: 0.003, cacheWrite: 0 },
       "deepseek/deepseek-v4-flash-vision-exp": {
-        input: 0.22,
-        output: 0.66,
-        cacheRead: 0.007,
+        input: 0.15,
+        output: 0.6,
+        cacheRead: 0.003,
+        cacheWrite: 0,
+      },
+      "deepseek/deepseek-v4-flash-fast": {
+        input: 0.28,
+        output: 0.56,
+        cacheRead: 0.07,
+        cacheWrite: 0,
+      },
+      "deepseek/deepseek-v4.1-flash": {
+        input: 0.15,
+        output: 0.6,
+        cacheRead: 0.003,
         cacheWrite: 0,
       },
       "MiniMaxAI/MiniMax-M3": { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0 },
+      "z-ai/glm-5.3-flashx": { input: 0.37, output: 1.25, cacheRead: 0.075, cacheWrite: 0 },
+      "xiaomi/mimo-v2.6-pro": { input: 0.435, output: 0.87, cacheRead: 0.0036, cacheWrite: 0 },
+      "xiaomi/mimo-v2.6-pro-ultraspeed": {
+        input: 4.35,
+        output: 8.7,
+        cacheRead: 0.036,
+        cacheWrite: 0,
+      },
+      "xiaomi/mimo-v2.6-flash": { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0 },
       "xiaomi/mimo-v2.5-pro": { input: 0.435, output: 0.87, cacheRead: 0.0036, cacheWrite: 0 },
       "xiaomi/mimo-v2.5": { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0 },
+      "Qwen/Qwen3.8-Omni-Flash": { input: 0.15, output: 0.47, cacheRead: 0.016, cacheWrite: 0 },
+      "Qwen/Qwen3.8-Max-0902": { input: 2, output: 6, cacheRead: 0.25, cacheWrite: 0 },
       "z-ai/glm-5.3-flash": { input: 0.15, output: 0.5, cacheRead: 0.03, cacheWrite: 0 },
       "zai-org/GLM-5.3": { input: 1.4, output: 4.4, cacheRead: 0.26, cacheWrite: 0 },
       "Qwen/Qwen3.8-27B": { input: 0.4, output: 3, cacheRead: 0.04, cacheWrite: 0 },
       "Qwen/Qwen3.8-Flash": { input: 0.16, output: 0.47, cacheRead: 0.016, cacheWrite: 0 },
-      "tencent/hy4-preview": { input: 0.834, output: 2.501, cacheRead: 0.042, cacheWrite: 0 },
-      "google/gemini-3.7-flash": {
-        input: 0.75,
-        output: 3.75,
-        cacheRead: 0.075,
-        cacheWrite: 0.04167,
+      "Qwen/Qwen3.7-Plus": {
+        input: 0.4,
+        output: 1.6,
+        cacheRead: 0.08,
+        cacheWrite: 0.5,
+        tiers: [
+          { inputTokensAbove: 256_000, input: 1.2, output: 4.8, cacheRead: 0.24, cacheWrite: 1.5 },
+        ],
       },
-      "xai/grok-4.6": { input: 2, output: 6, cacheRead: 0.5, cacheWrite: 0 },
-      "minimax/minimax-m3-free": { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      "minimax/minimax-m2.7-free": { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      "Qwen/Qwen3.7-Flash": {
+        input: 0.03,
+        output: 0.13,
+        cacheRead: 0.006,
+        cacheWrite: 0.038,
+        tiers: [
+          { inputTokensAbove: 32_000, input: 0.1, output: 0.4, cacheRead: 0.02, cacheWrite: 0.125 },
+          { inputTokensAbove: 256_000, input: 0.2, output: 0.8, cacheRead: 0.04, cacheWrite: 0.25 },
+        ],
+      },
+      "meituan/LongCat-2.0": { input: 0.3, output: 1.2, cacheRead: 0.006, cacheWrite: 0 },
+      "stepfun/Step-5-Preview": { input: 1, output: 2.7, cacheRead: 0.05, cacheWrite: 0 },
+      "stepfun/Step-3.5-Flash": { input: 0.09, output: 0.3, cacheRead: 0.02, cacheWrite: 0 },
+      "tencent/hy4-preview": { input: 0.834, output: 2.501, cacheRead: 0.042, cacheWrite: 0 },
+      "google/gemini-3.8-flash": { input: 1.5, output: 7.5, cacheRead: 0.15, cacheWrite: 0 },
+      "google/gemini-3.7-flash": {
+        input: 1.5,
+        output: 7.5,
+        cacheRead: 0.15,
+        cacheWrite: 0.08334,
+      },
+      "stealth/space-bunny-alpha": { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      "stealth/pixel-canary": { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      "inclusionai/ling-3.0-flash-sante:free": {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+      },
+      "meta/muse-spark-1.3": { input: 1.25, output: 4.25, cacheRead: 0.15, cacheWrite: 0 },
+      "meta/muse-spark-1.3-contributor": {
+        input: 0.1,
+        output: 0.2,
+        cacheRead: 0.002,
+        cacheWrite: 0,
+      },
+      "xai/grok-4.6": {
+        input: 2,
+        output: 6,
+        cacheRead: 0.5,
+        cacheWrite: 0,
+        tiers: [{ inputTokensAbove: 200_000, input: 4, output: 12, cacheRead: 1, cacheWrite: 0 }],
+      },
+      "xai/grok-4.7": {
+        input: 2,
+        output: 6,
+        cacheRead: 0.5,
+        cacheWrite: 0,
+        tiers: [{ inputTokensAbove: 200_000, input: 4, output: 12, cacheRead: 1, cacheWrite: 0 }],
+      },
     };
 
     for (const [id, expected] of Object.entries(expectedCosts)) {
@@ -358,7 +510,7 @@ describe("Command Code catalog conversion", () => {
       name: "Command Code",
       baseUrl: "https://api.commandcode.ai/provider/v1",
     });
-    expect(provider.getModels()).toHaveLength(62);
+    expect(provider.getModels()).toHaveLength(82);
     expect(new Set(provider.getModels().map((model) => model.api))).toEqual(
       new Set(["anthropic-messages", "openai-completions"]),
     );
@@ -484,7 +636,9 @@ describe("Command Code live catalog", () => {
       "non-string endpoint metadata",
       {
         object: "list",
-        data: [{ id: "id", name: "Name", context_length: 1000, supported_endpoints: ["/messages", 1] }],
+        data: [
+          { id: "id", name: "Name", context_length: 1000, supported_endpoints: ["/messages", 1] },
+        ],
       },
     ],
     [
