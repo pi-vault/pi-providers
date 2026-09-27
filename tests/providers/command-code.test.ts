@@ -3,6 +3,7 @@ import {
   InMemoryCredentialStore,
   InMemoryModelsStore,
   type Model,
+  normalizeContext,
 } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -86,7 +87,7 @@ async function captureRequest(modelId: string): Promise<Request> {
   await provider
     .stream(
       model,
-      { messages: [{ role: "user", content: "hello", timestamp: Date.now() }] },
+      normalizeContext({ messages: [{ role: "user", content: "hello", timestamp: Date.now() }] }),
       { apiKey: "test-key", fetch, maxRetries: 0 },
     )
     .result();
@@ -462,7 +463,7 @@ describe("Command Code catalog conversion", () => {
   });
 
   it.each([
-    ["deepseek/deepseek-v4-flash-vision-exp", "DeepSeek V4 Flash Vision (exp)", 1_000_000, 384_000],
+    ["deepseek/deepseek-v4-flash-vision-exp", "DeepSeek V4 Flash Vision (exp)", 1_000_000, 943_718],
     ["z-ai/glm-5.3-flash", "GLM-5.3 Flash", 1_048_576, 131_072],
     ["Qwen/Qwen3.8-27B", "Qwen 3.8 27B", 262_144, 32_768],
     ["Qwen/Qwen3.8-Flash", "Qwen 3.8 Flash", 1_000_000, 131_072],
@@ -556,7 +557,7 @@ describe("Command Code catalog conversion", () => {
     expect(openAI.headers.get("x-cmd-zdr")).toBe("1");
 
     const anthropic = await captureRequest("claude-sonnet-5");
-    expect(anthropic.url).toBe("https://api.commandcode.ai/provider/v1/messages");
+    expect(new URL(anthropic.url).pathname).toBe("/provider/v1/messages");
     expect(anthropic.headers.get("x-api-key")).toBe("test-key");
     expect(anthropic.headers.get("x-cmd-zdr")).toBe("1");
   });

@@ -3,6 +3,7 @@
 import type {
   AssistantMessage,
   AssistantMessageEventStream,
+  JsonObject,
   ToolCall,
 } from "@earendil-works/pi-ai";
 import { createAssistantMessageEventStream, parseJsonWithRepair } from "@earendil-works/pi-ai";
@@ -102,7 +103,7 @@ export function hardenToolCalls(base: AssistantMessageEventStream): AssistantMes
               const raw = argDeltas.get(ev.contentIndex);
               if (raw) {
                 try {
-                  const repaired = parseJsonWithRepair<Record<string, unknown>>(raw);
+                  const repaired = parseJsonWithRepair<JsonObject>(raw);
                   if (!isEmptyArgs(repaired)) {
                     const fixed: ToolCall = { ...toolCall, arguments: repaired };
                     repairs.set(ev.contentIndex, fixed);
