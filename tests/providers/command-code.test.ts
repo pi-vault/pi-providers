@@ -17,7 +17,14 @@ import {
 
 const validPayload = {
   object: "list",
-  data: [{ id: "new-model", name: "New Model", context_length: 32_000 }],
+  data: [
+    {
+      id: "new-model",
+      name: "New Model",
+      context_length: 32_000,
+      supported_endpoints: ["/chat/completions"],
+    },
+  ],
 };
 
 function jsonResponse(value: unknown, status = 200): Response {
@@ -95,6 +102,7 @@ describe("Command Code catalog conversion", () => {
         id: "claude-sonnet-5",
         name: "Claude Sonnet 5",
         contextWindow: 1_000_000,
+        supportedEndpoints: ["/messages"],
       }),
     ).toMatchObject({
       id: "claude-sonnet-5",
@@ -110,6 +118,7 @@ describe("Command Code catalog conversion", () => {
         id: "deepseek/deepseek-v4-flash",
         name: "DeepSeek V4 Flash",
         contextWindow: 1_000_000,
+        supportedEndpoints: ["/chat/completions"],
       }).api,
     ).toBe("openai-completions");
   });
@@ -120,6 +129,7 @@ describe("Command Code catalog conversion", () => {
         id: "new/vendor-model",
         name: "New Vendor Model",
         contextWindow: 32_000,
+        supportedEndpoints: ["/chat/completions"],
       }),
     ).toMatchObject({
       reasoning: false,
@@ -127,6 +137,39 @@ describe("Command Code catalog conversion", () => {
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       maxTokens: 16_384,
     });
+  });
+
+  it("routes a non-Claude ID to Anthropic Messages when /messages is declared", () => {
+    expect(
+      modelFromCatalogRecord({
+        id: "vendor/message-model",
+        name: "Message Model",
+        contextWindow: 32_000,
+        supportedEndpoints: ["/messages"],
+      }).api,
+    ).toBe("anthropic-messages");
+  });
+
+  it("routes a Claude-looking ID to OpenAI Completions when /chat/completions is declared", () => {
+    expect(
+      modelFromCatalogRecord({
+        id: "claude-not-messages",
+        name: "Claude-looking Chat Model",
+        contextWindow: 32_000,
+        supportedEndpoints: ["/chat/completions"],
+      }).api,
+    ).toBe("openai-completions");
+  });
+
+  it("prefers Anthropic Messages when both chat endpoints are declared", () => {
+    expect(
+      modelFromCatalogRecord({
+        id: "vendor/both-endpoints",
+        name: "Both Endpoints",
+        contextWindow: 32_000,
+        supportedEndpoints: ["/chat/completions", "/messages"],
+      }).api,
+    ).toBe("anthropic-messages");
   });
 
   it("bundles the captured Command Code catalog", () => {
@@ -189,7 +232,12 @@ describe("Command Code catalog conversion", () => {
 
   it("uses Command’s stable and tiered pricing", () => {
     const costFor = (id: string) =>
-      modelFromCatalogRecord({ id, name: id, contextWindow: 1_000_000 }).cost;
+      modelFromCatalogRecord({
+        id,
+        name: id,
+        contextWindow: 1_000_000,
+        supportedEndpoints: ["/chat/completions"],
+      }).cost;
 
     const expectedCosts = {
       "claude-sonnet-5": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
@@ -247,6 +295,7 @@ describe("Command Code catalog conversion", () => {
         id: "claude-sonnet-5",
         name: "Command Claude",
         contextWindow: 900_000,
+        supportedEndpoints: ["/messages"],
       }),
     ).toMatchObject({
       name: "Command Claude",
@@ -270,7 +319,15 @@ describe("Command Code catalog conversion", () => {
   ])(
     "uses Pi metadata for current live vision models: %s",
     (id, name, contextWindow, maxTokens) => {
-      expect(modelFromCatalogRecord({ id, name, contextWindow }), id).toMatchObject({
+      expect(
+        modelFromCatalogRecord({
+          id,
+          name,
+          contextWindow,
+          supportedEndpoints: ["/chat/completions"],
+        }),
+        id,
+      ).toMatchObject({
         reasoning: true,
         input: ["text", "image"],
         maxTokens,
@@ -284,6 +341,7 @@ describe("Command Code catalog conversion", () => {
         id: "Qwen/Qwen3.7-Flash",
         name: "Qwen 3.7 Flash",
         contextWindow: 200_000,
+        supportedEndpoints: ["/chat/completions"],
       }),
     ).toMatchObject({
       reasoning: true,
@@ -396,8 +454,50 @@ describe("Command Code live catalog", () => {
       {
         object: "list",
         data: [
-          { id: "same", name: "One", context_length: 1000 },
-          { id: "same", name: "Two", context_length: 1000 },
+          {
+            id: "same",
+            name: "One",
+            context_length: 1000,
+            supported_endpoints: ["/chat/completions"],
+          },
+          {
+            id: "same",
+            name: "Two",
+            context_length: 1000,
+            supported_endpoints: ["/chat/completions"],
+          },
+        ],
+      },
+    ],
+    [
+      "missing endpoint metadata",
+      { object: "list", data: [{ id: "id", name: "Name", context_length: 1000 }] },
+    ],
+    [
+      "non-array endpoint metadata",
+      {
+        object: "list",
+        data: [{ id: "id", name: "Name", context_length: 1000, supported_endpoints: "/messages" }],
+      },
+    ],
+    [
+      "non-string endpoint metadata",
+      {
+        object: "list",
+        data: [{ id: "id", name: "Name", context_length: 1000, supported_endpoints: ["/messages", 1] }],
+      },
+    ],
+    [
+      "no usable chat endpoints",
+      {
+        object: "list",
+        data: [
+          {
+            id: "responses-only",
+            name: "Responses Only",
+            context_length: 1000,
+            supported_endpoints: ["/responses"],
+          },
         ],
       },
     ],
@@ -429,6 +529,41 @@ describe("Command Code live catalog", () => {
     expect(result.errors.get("command-code")).toBeInstanceOf(Error);
     expect(models.getModel("command-code", cached.id)).toEqual(cached);
     expect(stored?.models).toEqual([cached]);
+  });
+
+  it("skips non-chat live records while publishing usable chat models", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({
+        object: "list",
+        data: [
+          {
+            id: "chat-model",
+            name: "Chat Model",
+            context_length: 32_000,
+            supported_endpoints: ["/chat/completions"],
+          },
+          {
+            id: "responses-only",
+            name: "Responses Only",
+            context_length: 32_000,
+            supported_endpoints: ["/responses"],
+          },
+          {
+            id: "unknown-endpoint",
+            name: "Unknown Endpoint",
+            context_length: 32_000,
+            supported_endpoints: ["/future"],
+          },
+        ],
+      }),
+    );
+    const { models } = await createRefreshModels();
+
+    await models.refresh({ providers: ["command-code"], force: true });
+
+    expect(models.getModel("command-code", "chat-model")).toBeDefined();
+    expect(models.getModel("command-code", "responses-only")).toBeUndefined();
+    expect(models.getModel("command-code", "unknown-endpoint")).toBeUndefined();
   });
 
   it("retains the cached catalog for malformed JSON", async () => {
@@ -561,7 +696,14 @@ describe("Command Code live catalog", () => {
       validPayload,
       {
         object: "list",
-        data: [{ id: "another-model", name: "Another Model", context_length: 16_000 }],
+        data: [
+          {
+            id: "another-model",
+            name: "Another Model",
+            context_length: 16_000,
+            supported_endpoints: ["/chat/completions"],
+          },
+        ],
       },
     ];
     vi.spyOn(globalThis, "fetch").mockImplementation(async () => jsonResponse(payloads.shift()));

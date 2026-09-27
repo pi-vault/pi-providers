@@ -14,6 +14,7 @@ export interface CommandCodeCatalogRecord {
   id: string;
   name: string;
   contextWindow: number;
+  supportedEndpoints: readonly string[];
 }
 
 type CommandCodeModel = Model<"anthropic-messages"> | Model<"openai-completions">;
@@ -82,13 +83,16 @@ function donorFor(record: CommandCodeCatalogRecord): Model<Api> | undefined {
 
 export function modelFromCatalogRecord(record: CommandCodeCatalogRecord): CommandCodeModel {
   const donor = donorFor(record);
+  const usesMessages = record.supportedEndpoints.includes("/messages");
+  const usesCompletions = record.supportedEndpoints.includes("/chat/completions");
+  if (!usesMessages && !usesCompletions) {
+    throw new Error(`Unsupported Command Code model endpoints: ${record.id}`);
+  }
   const model = {
     id: record.id,
     name: record.name,
     provider: "command-code",
-    baseUrl: record.id.startsWith("claude-")
-      ? COMMAND_CODE_ANTHROPIC_BASE_URL
-      : COMMAND_CODE_BASE_URL,
+    baseUrl: usesMessages ? COMMAND_CODE_ANTHROPIC_BASE_URL : COMMAND_CODE_BASE_URL,
     reasoning: donor?.reasoning ?? false,
     input: donor ? [...donor.input] : (["text"] as ("text" | "image")[]),
     cost: COMMAND_COSTS[record.id as CommandCodeCatalogId] ?? ZERO_COST,
@@ -96,7 +100,7 @@ export function modelFromCatalogRecord(record: CommandCodeCatalogRecord): Comman
     maxTokens: Math.min(donor?.maxTokens ?? 16_384, record.contextWindow),
   };
 
-  if (record.id.startsWith("claude-")) {
+  if (usesMessages) {
     const anthropic = {
       ...model,
       api: "anthropic-messages" as const,
@@ -113,7 +117,7 @@ export function modelFromCatalogRecord(record: CommandCodeCatalogRecord): Comman
   return { ...model, api: "openai-completions", compat: OPENAI_COMPAT };
 }
 
-export const COMMAND_CODE_CATALOG = [
+const LEGACY_COMMAND_CODE_CATALOG = [
   { id: "claude-sonnet-5", name: "Claude Sonnet 5", contextWindow: 1_000_000 },
   { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", contextWindow: 1_000_000 },
   { id: "claude-fable-5", name: "Claude Fable 5", contextWindow: 1_000_000 },
@@ -192,7 +196,16 @@ export const COMMAND_CODE_CATALOG = [
   },
   { id: "xai/grok-4.5", name: "Grok 4.5", contextWindow: 500_000 },
   { id: "xai/grok-4.6", name: "Grok 4.6", contextWindow: 500_000 },
-] as const satisfies readonly CommandCodeCatalogRecord[];
+] as const;
+
+export const COMMAND_CODE_CATALOG: readonly CommandCodeCatalogRecord[] = LEGACY_COMMAND_CODE_CATALOG.map(
+  (record) => ({
+    ...record,
+    supportedEndpoints: record.id.startsWith("claude-")
+      ? ["/messages"]
+      : ["/chat/completions", "/responses"],
+  }),
+);
 
 type CommandCodeCatalogId = (typeof COMMAND_CODE_CATALOG)[number]["id"];
 
