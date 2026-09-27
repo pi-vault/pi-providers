@@ -273,7 +273,7 @@ export const COMMAND_CODE_CATALOG: readonly CommandCodeCatalogRecord[] =
 type CommandCodeCatalogId = (typeof COMMAND_CODE_CATALOG_SNAPSHOT)[number]["id"];
 
 // Snapshot source: https://commandcode.ai/docs/resources/pricing-limits
-// Effective rates billed 2026-08-29, USD per 1M tokens.
+// Effective rates captured 2026-09-27, USD per 1M tokens.
 const COMMAND_COSTS: Readonly<Partial<Record<CommandCodeCatalogId, ModelCost>>> = {
   "claude-sonnet-5": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
   "claude-sonnet-4-6": { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
@@ -335,7 +335,8 @@ const COMMAND_COSTS: Readonly<Partial<Record<CommandCodeCatalogId, ModelCost>>> 
   "gpt-5.3-codex": { input: 2, output: 8, cacheRead: 0.5, cacheWrite: 0 },
   "gpt-5.4-mini": { input: 0.75, output: 4.5, cacheRead: 0.075, cacheWrite: 0 },
   // ponytail: Pi ModelCost cannot express UTC price bands. These are Command's displayed
-  // off-peak rates for V4 Flash variants; peak rates are 0.3/1.2/0.006.
+  // off-peak estimates. Peak input/output/cache-read: Pro 1.32/3.96/0.044;
+  // Flash and Flash Vision 0.3/1.2/0.006.
   "deepseek/deepseek-v4-pro": { input: 0.66, output: 1.98, cacheRead: 0.022, cacheWrite: 0 },
   "deepseek/deepseek-v4-flash": { input: 0.15, output: 0.6, cacheRead: 0.003, cacheWrite: 0 },
   "deepseek/deepseek-v4-flash-vision-exp": {

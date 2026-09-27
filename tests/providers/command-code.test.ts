@@ -746,6 +746,35 @@ describe("Command Code live catalog", () => {
     expect(models.getModel("command-code", "unknown-endpoint")).toBeUndefined();
   });
 
+  it("removes a bundled model that no longer advertises a chat endpoint", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({
+        object: "list",
+        data: [
+          {
+            id: "claude-sonnet-5",
+            name: "Claude Sonnet 5",
+            context_length: 1_000_000,
+            supported_endpoints: ["/responses"],
+          },
+          {
+            id: "new-model",
+            name: "New Model",
+            context_length: 32_000,
+            supported_endpoints: ["/chat/completions"],
+          },
+        ],
+      }),
+    );
+    const { models } = await createRefreshModels();
+
+    const result = await models.refresh({ providers: ["command-code"], force: true });
+
+    expect(result.errors.size).toBe(0);
+    expect(models.getModel("command-code", "new-model")).toBeDefined();
+    expect(models.getModel("command-code", "claude-sonnet-5")).toBeUndefined();
+  });
+
   it("retains the cached catalog for malformed JSON", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("{", { status: 200 }));
     const { models, modelsStore, cached } = await createStoredRefreshModels();
@@ -766,6 +795,7 @@ describe("Command Code live catalog", () => {
 
     expect(fetch).not.toHaveBeenCalled();
     expect(models.getModel("command-code", cached.id)).toEqual(cached);
+    expect(models.getModel("command-code", "claude-sonnet-5")).toBeUndefined();
   });
 
   it("skips a fresh non-forced online refresh without rewriting checkedAt", async () => {
@@ -871,7 +901,7 @@ describe("Command Code live catalog", () => {
     expect(models.getModel("command-code", cached.id)).toEqual(cached);
   });
 
-  it("removes live-only models absent from a later successful catalog", async () => {
+  it("replaces the previous catalog with a later successful catalog", async () => {
     const payloads = [
       validPayload,
       {
@@ -896,7 +926,7 @@ describe("Command Code live catalog", () => {
     expect(models.getModel("command-code", "another-model")).toMatchObject({
       name: "Another Model",
     });
-    expect(models.getModel("command-code", "claude-sonnet-5")).toBeDefined();
+    expect(models.getModel("command-code", "claude-sonnet-5")).toBeUndefined();
   });
 
   it("persists headerless models and applies ZDR only to each provider instance", async () => {

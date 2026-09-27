@@ -77,6 +77,7 @@ async function fetchCommandCodeModels(context: RefreshModelsContext) {
 
 export function createCommandCodeProvider(): Provider<"anthropic-messages" | "openai-completions"> {
   const headers = process.env.CMD_ZDR === "1" ? { "x-cmd-zdr": "1" } : undefined;
+  let authoritativeModelIds: ReadonlySet<string> | undefined;
 
   const provider = createProvider({
     id: "command-code",
@@ -92,8 +93,13 @@ export function createCommandCodeProvider(): Provider<"anthropic-messages" | "op
   });
 
   const generatedGetModels = provider.getModels;
-  provider.getModels = () =>
-    headers ? generatedGetModels().map((model) => ({ ...model, headers })) : generatedGetModels();
+  provider.getModels = () => {
+    const modelIds = authoritativeModelIds;
+    const models = modelIds
+      ? generatedGetModels().filter((model) => modelIds.has(model.id))
+      : generatedGetModels();
+    return headers ? models.map((model) => ({ ...model, headers })) : models;
+  };
 
   const generatedRefresh = provider.refreshModels;
   provider.refreshModels = async (context) => {
@@ -106,7 +112,26 @@ export function createCommandCodeProvider(): Provider<"anthropic-messages" | "op
       return;
     }
     try {
-      await generatedRefresh?.(context);
+      await generatedRefresh?.({
+        ...context,
+        publish: (publication) =>
+          context.publish({
+            ...publication,
+            update: publication.update
+              ? () => {
+                  publication.update?.();
+                  const publishedModels = publication.persist?.models ?? context.stored?.models;
+                  if (publishedModels) {
+                    authoritativeModelIds = new Set(
+                      publishedModels
+                        .filter((model) => model.provider === provider.id)
+                        .map((model) => model.id),
+                    );
+                  }
+                }
+              : undefined,
+          }),
+      });
     } catch (error) {
       if (context.allowNetwork && !context.signal.aborted) {
         await context.publish({
