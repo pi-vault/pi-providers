@@ -2,9 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 import createExtension from "../src/index.ts";
 
 describe("providers extension", () => {
-  it("registers Command Code before MiniMax providers and StepFun AI", () => {
+  it("registers Command Code before MiniMax providers and StepFun AI, plus the typesafe_decide tool", () => {
     const registerProvider = vi.fn();
-    const mockPi = { registerProvider } as unknown as Parameters<typeof createExtension>[0];
+    const registerTool = vi.fn();
+    const mockPi = { registerProvider, registerTool } as unknown as Parameters<
+      typeof createExtension
+    >[0];
 
     createExtension(mockPi);
 
@@ -19,11 +22,20 @@ describe("providers extension", () => {
       "minimax-openai-cn",
       "stepfun-ai",
     ]);
+
+    expect(registerTool).toHaveBeenCalledTimes(1);
+    expect(registerTool.mock.calls[0]?.[0]).toMatchObject({
+      name: "typesafe_decide",
+      label: "TypeSafe Decide",
+    });
   });
 
   it("minimax-openai uses global endpoint and key", () => {
     const registerProvider = vi.fn();
-    const mockPi = { registerProvider } as unknown as Parameters<typeof createExtension>[0];
+    const registerTool = vi.fn();
+    const mockPi = { registerProvider, registerTool } as unknown as Parameters<
+      typeof createExtension
+    >[0];
 
     createExtension(mockPi);
 
@@ -37,7 +49,10 @@ describe("providers extension", () => {
 
   it("minimax-openai-cn uses CN endpoint and key", () => {
     const registerProvider = vi.fn();
-    const mockPi = { registerProvider } as unknown as Parameters<typeof createExtension>[0];
+    const registerTool = vi.fn();
+    const mockPi = { registerProvider, registerTool } as unknown as Parameters<
+      typeof createExtension
+    >[0];
 
     createExtension(mockPi);
 
