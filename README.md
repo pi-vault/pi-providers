@@ -39,7 +39,7 @@ export CMD_API_KEY="..."
 # Optional: direct TypeSafe credential for typesafe_decide (preferred)
 export TYPESAFE_API_KEY="..."
 
-# Optional: require zero-data retention for Command Code requests
+# Optional: enforce zero data retention for Command Code chat-provider requests only
 export CMD_ZDR=1
 ```
 
@@ -90,7 +90,7 @@ Cache writes are free for `MiniMax-M3`. They cost $0.375 per 1M tokens for `Mini
 
 - **Noul** — a yes/no question with optional `true` / `false` criteria.
 - **Choice** — a question over 2–255 named options, each with an optional rubric.
-- **Score** — a question over 2–10 ordered levels, each with an optional rubric.
+- **Score** — a question over 2–10 ordered level descriptions.
 
 See the [TypeSafe quick start](https://docs.typesafe.ai/introduction/quickstart) for how to construct questions, and the [TypeSafe API reference](https://docs.typesafe.ai/api) for the full upstream contract. A request using all three question types:
 
@@ -121,7 +121,7 @@ See the [TypeSafe quick start](https://docs.typesafe.ai/introduction/quickstart)
 
 **Billing.** The result reports which backend answered: `backend` is `typesafe` or `command-code`, alongside the concrete response `model`, the `answers`, and token `usage`. Direct calls bill your TypeSafe account. Fallback calls consume the Command Code plan's model-specific credits or your pay-as-you-go credit balance. See the [Command Code Provider API](https://commandcode.ai/docs/provider) and the [GOAT plan](https://commandcode.ai/docs/plans/goat) for current rates — this README intentionally does not copy mutable prices.
 
-**Privacy.** The tool never sends `x-cmd-zdr`, even when `CMD_ZDR=1` is set, because Command Code documents no ZDR-capable upstream for `typesafe/jev`. If your policy requires enforced zero data retention, do not rely on the Command Code fallback; configure a direct TypeSafe credential instead.
+**Privacy.** The tool never sends `x-cmd-zdr`, even when `CMD_ZDR=1` is set, because Command Code documents no ZDR-capable upstream for `typesafe/jev`. It does not provide an enforced-ZDR mode. A direct TypeSafe credential changes the preferred backend but does not disable Command Code fallback after retryable direct failures, and direct TypeSafe handling is governed by your TypeSafe agreement rather than `CMD_ZDR`. If your policy requires ZDR, do not send that data through this tool unless that agreement independently satisfies the requirement and Command Code fallback authentication is unavailable.
 
 ## Known Limits
 

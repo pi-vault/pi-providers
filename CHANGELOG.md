@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `typesafe_decide`, a non-chat tool that answers typed Noul, Choice, and Score questions about a JSON state with TypeSafe Jev and returns structured probabilities instead of generated text. It calls TypeSafe directly with a host-resolved `typesafe` credential or `TYPESAFE_API_KEY`, and falls back to a single Command Code `typesafe/jev` request when direct access is absent or fails retryably. Direct `400` / `422` responses and cancellation are terminal and never fall back. System One requests never inherit `CMD_ZDR`, even when `CMD_ZDR=1`, because `typesafe/jev` has no ZDR-capable Command Code upstream; users who require enforced ZDR must not rely on the Command Code fallback.
+- `typesafe_decide`, a non-chat tool that answers typed Noul, Choice, and Score questions about a JSON state with TypeSafe Jev and returns structured probabilities instead of generated text. It calls TypeSafe directly with a host-resolved `typesafe` credential or `TYPESAFE_API_KEY`, and falls back to a single Command Code `typesafe/jev` request when direct access is absent or fails retryably. Direct `400` / `422` responses and cancellation are terminal and never fall back. System One requests never inherit `CMD_ZDR`, even when `CMD_ZDR=1`, because `typesafe/jev` has no ZDR-capable Command Code upstream. The tool does not provide an enforced-ZDR mode: a direct credential neither disables retryable Command Code fallback nor establishes ZDR for direct TypeSafe requests.
 
 ### Changed
 
