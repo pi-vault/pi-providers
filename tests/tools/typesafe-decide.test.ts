@@ -5,6 +5,7 @@ import type {
   ExtensionContext,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import type { TSchema } from "typebox";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { registerTypeSafeDecisionTool } from "../../src/tools/typesafe-decide.ts";
 
@@ -62,7 +63,31 @@ type ToolDetails = {
   usage: { input_tokens: number; output_tokens: number };
 };
 
-type Captured = ToolDefinition<any, ToolDetails, any>;
+type Captured = ToolDefinition<TSchema, ToolDetails, unknown>;
+
+const own = (value: Record<string, unknown>, key: string) =>
+  Object.getOwnPropertyDescriptor(value, key)?.value;
+
+type ParametersSchema = {
+  properties: {
+    questions: {
+      minProperties: number;
+      additionalProperties: {
+        anyOf: Array<{
+          properties: {
+            criteria: {
+              required?: string[];
+              minProperties?: number;
+              maxProperties?: number;
+              minItems?: number;
+              maxItems?: number;
+            };
+          };
+        }>;
+      };
+    };
+  };
+};
 
 interface HarnessOptions {
   typesafeKey?: string | undefined;
@@ -128,7 +153,7 @@ afterEach(() => {
 describe("TypeSafe decide schema and preflight", () => {
   it("exposes TypeBox cardinality constraints in the parameter schema", () => {
     const { tool } = createHarness();
-    const schema = tool.parameters as any;
+    const schema = tool.parameters as unknown as ParametersSchema;
     const variants = schema.properties.questions.additionalProperties.anyOf;
 
     expect(schema.properties.questions.minProperties).toBe(1);
@@ -202,6 +227,104 @@ describe("TypeSafe decide schema and preflight", () => {
     expect(harness.getApiKeyForProvider).not.toHaveBeenCalled();
   });
 
+  it("rejects non-JSON nested values without fetching", async () => {
+    const harness = createHarness({ typesafeKey: DIRECT_KEY });
+    const { fetchMock } = installFetch([() => jsonResponse(successBody)]);
+
+    await expect(
+      callTool(harness, {
+        state: { callback: () => "lost by JSON.stringify" },
+        questions: {
+          valid: { type: "noul", instructions: "Is this valid?" },
+        },
+      }),
+    ).rejects.toThrow(/state must be a JSON string, object, or array/i);
+
+    await expect(
+      callTool(harness, {
+        state,
+        questions: {
+          invalid: { type: "noul", instructions: { missing: undefined } },
+        },
+      }),
+    ).rejects.toThrow(/instructions must be a string, object, or array/i);
+
+    await expect(
+      callTool(harness, {
+        state: new Date("2026-09-27T00:00:00Z"),
+        questions: {
+          valid: { type: "noul", instructions: "Is this valid?" },
+        },
+      }),
+    ).rejects.toThrow(/state must be a JSON string, object, or array/i);
+
+    await expect(
+      callTool(harness, {
+        state: true,
+        questions: {
+          valid: { type: "noul", instructions: "Is this valid?" },
+        },
+      }),
+    ).rejects.toThrow(/state must be a JSON string, object, or array/i);
+
+    await expect(
+      callTool(harness, {
+        state,
+        questions: {
+          invalid: {
+            type: "choice",
+            instructions: "Which?",
+            criteria: { yes: true, no: false },
+          },
+        },
+      }),
+    ).rejects.toThrow(/must describe the option/i);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(harness.getApiKeyForProvider).not.toHaveBeenCalled();
+  });
+
+  it("rejects JSON scalar question fields that TypeSafe does not accept", async () => {
+    const harness = createHarness({ typesafeKey: DIRECT_KEY });
+    const { fetchMock } = installFetch([() => jsonResponse(successBody)]);
+
+    await expect(
+      callTool(harness, {
+        state,
+        questions: { invalid: { type: "noul", instructions: true } },
+      }),
+    ).rejects.toThrow(/instructions must be a string, object, or array/i);
+
+    await expect(
+      callTool(harness, {
+        state,
+        questions: {
+          invalid: {
+            type: "noul",
+            instructions: "Is this valid?",
+            criteria: { true: null },
+          },
+        },
+      }),
+    ).rejects.toThrow(/noul criterion "true" must be a string, object, or array/i);
+
+    await expect(
+      callTool(harness, {
+        state,
+        questions: {
+          invalid: {
+            type: "score",
+            instructions: "How much?",
+            criteria: ["Low", null],
+          },
+        },
+      }),
+    ).rejects.toThrow(/score level 1 must be a string, object, or array/i);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(harness.getApiKeyForProvider).not.toHaveBeenCalled();
+  });
+
   it("rejects Score criteria outside 2–10 levels without fetching", async () => {
     const harness = createHarness({ typesafeKey: DIRECT_KEY });
     const { fetchMock } = installFetch([() => jsonResponse(successBody)]);
@@ -250,18 +373,18 @@ describe("TypeSafe decide schema and preflight", () => {
     const result = await callTool(harness, { state, questions: sensitive });
 
     const sent = (await requests[0]?.json()) as { questions: Record<string, unknown> };
-    expect(Object.prototype.hasOwnProperty.call(sent.questions, "__proto__")).toBe(true);
-    expect(Object.prototype.hasOwnProperty.call(sent.questions, "toString")).toBe(true);
-    expect(sent.questions.__proto__).toEqual(sensitive.__proto__);
+    expect(Object.hasOwn(sent.questions, "__proto__")).toBe(true);
+    expect(Object.hasOwn(sent.questions, "toString")).toBe(true);
+    expect(own(sent.questions, "__proto__")).toEqual(own(sensitive, "__proto__"));
 
     const answers = result.details.answers;
-    expect(Object.prototype.hasOwnProperty.call(answers, "__proto__")).toBe(true);
-    expect(Object.prototype.hasOwnProperty.call(answers, "toString")).toBe(true);
-    expect(answers.__proto__).toEqual({ type: "noul", noul: 0.4 });
-    expect(JSON.parse(result.content[0]?.text ?? "{}").answers.__proto__).toEqual({
-      type: "noul",
-      noul: 0.4,
-    });
+    expect(Object.hasOwn(answers, "__proto__")).toBe(true);
+    expect(Object.hasOwn(answers, "toString")).toBe(true);
+    expect(own(answers, "__proto__")).toEqual({ type: "noul", noul: 0.4 });
+    const content = JSON.parse(result.content[0]?.text ?? "{}") as {
+      answers: Record<string, unknown>;
+    };
+    expect(own(content.answers, "__proto__")).toEqual({ type: "noul", noul: 0.4 });
   });
 });
 
@@ -298,6 +421,36 @@ describe("TypeSafe decide direct request", () => {
     expect(request?.headers.get("authorization")).toBe("Bearer direct-key");
     expect(request?.headers.has("x-cmd-zdr")).toBe(false);
     expect(await request?.json()).toEqual({ state, model: "jev-latest", questions });
+  });
+
+  it("serializes structured instructions and criteria descriptions", async () => {
+    const harness = createHarness({ typesafeKey: DIRECT_KEY });
+    const structuredQuestions = {
+      is_urgent: {
+        type: "noul",
+        instructions: { question: "Does this convey urgency?", evidence: ["three days"] },
+        criteria: { true: ["Time-sensitive"], false: { meaning: "No urgency" } },
+      },
+      department: {
+        type: "choice",
+        instructions: ["Choose the team", { source: "ticket" }],
+        criteria: { billing: null, technical: { meaning: "Bugs and outages" } },
+      },
+      frustration: {
+        type: "score",
+        instructions: { question: "How frustrated is the customer?" },
+        criteria: [{ label: "Calm" }, ["Frustrated"], { label: "Very angry" }],
+      },
+    } as const;
+    const { requests } = installFetch([() => jsonResponse(successBody)]);
+
+    await callTool(harness, { state, questions: structuredQuestions });
+
+    expect(await requests[0]?.json()).toEqual({
+      state,
+      model: "jev-latest",
+      questions: structuredQuestions,
+    });
   });
 
   it("returns backend, concrete model, answers, raw usage, and Pi usage", async () => {
@@ -390,19 +543,65 @@ describe("TypeSafe decide fallback policy", () => {
     expect(result.details.backend).toBe("command-code");
   });
 
-  it("falls back exactly once on a direct timeout", async () => {
+  it("falls back exactly once when the direct request signal times out", async () => {
     const harness = createHarness({ typesafeKey: DIRECT_KEY, commandKey: FALLBACK_KEY });
+    const directTimeout = new AbortController();
+    const fallbackTimeout = new AbortController();
+    vi.spyOn(AbortSignal, "timeout")
+      .mockReturnValueOnce(directTimeout.signal)
+      .mockReturnValueOnce(fallbackTimeout.signal);
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
     const { requests } = installFetch([
-      () => {
-        throw Object.assign(new Error("The operation timed out"), { name: "TimeoutError" });
-      },
+      (request) =>
+        new Promise<Response>((_resolve, reject) => {
+          markStarted();
+          request.signal.addEventListener("abort", () => reject(request.signal.reason), {
+            once: true,
+          });
+        }),
       () => jsonResponse(successBody),
     ]);
 
-    const result = await callTool(harness, { state, questions });
+    const pending = callTool(harness, { state, questions });
+    await started;
+    directTimeout.abort();
+    const result = await pending;
 
     expect(requests).toHaveLength(2);
     expect(result.details.backend).toBe("command-code");
+  });
+
+  it("reports a timeout while reading a direct response body", async () => {
+    const harness = createHarness({ typesafeKey: DIRECT_KEY, commandKey: undefined });
+    const timeout = new AbortController();
+    vi.spyOn(AbortSignal, "timeout").mockReturnValue(timeout.signal);
+    let markParsing!: () => void;
+    const parsing = new Promise<void>((resolve) => {
+      markParsing = resolve;
+    });
+    installFetch([
+      (request) =>
+        ({
+          ok: true,
+          status: 200,
+          json: () =>
+            new Promise<unknown>((_resolve, reject) => {
+              markParsing();
+              request.signal.addEventListener("abort", () => reject(request.signal.reason), {
+                once: true,
+              });
+            }),
+        }) as Response,
+    ]);
+
+    const pending = callTool(harness, { state, questions });
+    await parsing;
+    timeout.abort();
+
+    await expect(pending).rejects.toThrow(/TypeSafe.*timeout/i);
   });
 
   it("falls back exactly once on a malformed direct 200", async () => {
@@ -419,7 +618,40 @@ describe("TypeSafe decide fallback policy", () => {
   });
 
   it.each([
+    ["Noul probability outside 0-1", { type: "noul", noul: 2 }],
+    [
+      "Choice selecting an undeclared option",
+      {
+        type: "choice",
+        choice: "sales",
+        probabilities: { billing: 0.5, technical: 0.5 },
+        confidence: 0.5,
+      },
+    ],
+    ["Score missing distribution metadata", { type: "score", score: 1 }],
+  ])("falls back on malformed answer data: %s", async (label, malformedAnswer) => {
+    const harness = createHarness({ typesafeKey: DIRECT_KEY, commandKey: FALLBACK_KEY });
+    const malformed = structuredClone(successBody);
+    const answerId = label.startsWith("Noul")
+      ? "is_urgent"
+      : label.startsWith("Choice")
+        ? "department"
+        : "frustration";
+    (malformed.answers as Record<string, unknown>)[answerId] = malformedAnswer;
+    const { requests } = installFetch([
+      () => jsonResponse(malformed),
+      () => jsonResponse(successBody),
+    ]);
+
+    const result = await callTool(harness, { state, questions });
+
+    expect(requests).toHaveLength(2);
+    expect(result.details.backend).toBe("command-code");
+  });
+
+  it.each([
     ["400", 400],
+    ["404", 404],
     ["422", 422],
   ])("treats direct %s as terminal without a second billable request", async (_label, status) => {
     const harness = createHarness({ typesafeKey: DIRECT_KEY, commandKey: FALLBACK_KEY });
@@ -437,7 +669,7 @@ describe("TypeSafe decide fallback policy", () => {
     expect(requests[0]?.url).toBe(DIRECT_URL);
   });
 
-  it("treats caller cancellation as terminal and does not fall back", async () => {
+  it("treats caller cancellation during fetch as terminal and does not fall back", async () => {
     const harness = createHarness({ typesafeKey: DIRECT_KEY, commandKey: FALLBACK_KEY });
     const controller = new AbortController();
     const { requests } = installFetch([
@@ -455,10 +687,89 @@ describe("TypeSafe decide fallback policy", () => {
     );
 
     expect(error).toBeInstanceOf(Error);
-    expect((error as Error).message).toMatch(/cancel/i);
+    expect((error as Error).message).toMatch(/TypeSafe.*cancel/i);
     expect((error as Error).message).not.toMatch(/timed out|timeout/i);
     expect(requests).toHaveLength(1);
     expect(requests[0]?.url).toBe(DIRECT_URL);
+  });
+
+  it("treats caller cancellation during response parsing as terminal", async () => {
+    const harness = createHarness({ typesafeKey: DIRECT_KEY, commandKey: FALLBACK_KEY });
+    const controller = new AbortController();
+    const { requests } = installFetch([
+      () =>
+        ({
+          ok: true,
+          status: 200,
+          json: async () => {
+            controller.abort();
+            throw Object.assign(new Error("The operation was aborted"), { name: "AbortError" });
+          },
+        }) as unknown as Response,
+      () => jsonResponse(successBody),
+    ]);
+
+    const error = await callTool(harness, { state, questions }, controller.signal).catch(
+      (cause: Error) => cause,
+    );
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toMatch(/TypeSafe.*cancel/i);
+    expect(requests).toHaveLength(1);
+  });
+
+  it("does not start fallback when the caller aborts after a retryable response", async () => {
+    const harness = createHarness({ typesafeKey: DIRECT_KEY, commandKey: FALLBACK_KEY });
+    const controller = new AbortController();
+    const { requests } = installFetch([
+      () => {
+        controller.abort();
+        return new Response("unavailable", { status: 503 });
+      },
+      () => jsonResponse(successBody),
+    ]);
+
+    const error = await callTool(harness, { state, questions }, controller.signal).catch(
+      (cause: Error) => cause,
+    );
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toMatch(/TypeSafe.*cancel/i);
+    expect(requests).toHaveLength(1);
+  });
+
+  it("stops a pre-cancelled call before resolving credentials", async () => {
+    const harness = createHarness({ typesafeKey: undefined, commandKey: undefined });
+    const controller = new AbortController();
+    controller.abort();
+    const { fetchMock } = installFetch([() => jsonResponse(successBody)]);
+
+    await expect(callTool(harness, { state, questions }, controller.signal)).rejects.toThrow(
+      /TypeSafe.*cancel/i,
+    );
+
+    expect(harness.getApiKeyForProvider).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("reports cancellation while resolving fallback credentials", async () => {
+    const harness = createHarness({ typesafeKey: DIRECT_KEY, commandKey: FALLBACK_KEY });
+    const controller = new AbortController();
+    harness.getApiKeyForProvider.mockImplementation(async (provider: string) => {
+      if (provider === "typesafe") return DIRECT_KEY;
+      controller.abort();
+      return FALLBACK_KEY;
+    });
+    const { requests } = installFetch([
+      () => new Response("unavailable", { status: 503 }),
+      () => jsonResponse(successBody),
+    ]);
+
+    await expect(callTool(harness, { state, questions }, controller.signal)).rejects.toThrow(
+      /Command Code.*cancel/i,
+    );
+
+    expect(requests).toHaveLength(1);
   });
 
   it("fails before fetching when neither backend has credentials", async () => {

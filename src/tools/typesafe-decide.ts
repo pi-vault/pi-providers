@@ -1,7 +1,7 @@
 // src/tools/typesafe-decide.ts
 
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { type Static, Type, type TUnsafe } from "typebox";
+import { type Static, type TUnsafe, Type } from "typebox";
 
 const DIRECT_ENDPOINT = "https://api.typesafe.ai/v1/systemone";
 const DIRECT_MODEL = "jev-latest";
@@ -35,43 +35,50 @@ interface ScoreQuestion {
 type Question = NoulQuestion | ChoiceQuestion | ScoreQuestion;
 type QuestionMap = Record<string, Question>;
 
-/** A JSON value TypeSafe accepts for `instructions` and criteria descriptions. */
-type RubricValue = string | object | unknown[] | null;
+/** A structured JSON value TypeSafe accepts for instructions and rubric descriptions. */
+type QuestionValue = string | object | unknown[];
+type ChoiceRubricValue = QuestionValue | null;
 
-const rubricValueSchema = Type.Union([
+const questionValueSchema = Type.Union([
   Type.String(),
   Type.Object({}, { additionalProperties: Type.Unknown() }),
   Type.Array(Type.Unknown()),
-  Type.Null(),
 ]);
+const choiceRubricValueSchema = Type.Union([questionValueSchema, Type.Null()]);
 
 const questionSchema = Type.Union([
   Type.Object({
     type: Type.Literal("noul"),
-    instructions: Type.Unknown(),
+    instructions: questionValueSchema,
     criteria: Type.Optional(
-      Type.Object({ true: Type.Optional(Type.Unknown()), false: Type.Optional(Type.Unknown()) }),
+      Type.Object({
+        true: Type.Optional(questionValueSchema),
+        false: Type.Optional(questionValueSchema),
+      }),
     ),
   }),
   Type.Object({
     type: Type.Literal("choice"),
-    instructions: Type.Unknown(),
-    criteria: Type.Unsafe<Record<string, RubricValue>>(
+    instructions: questionValueSchema,
+    criteria: Type.Unsafe<Record<string, ChoiceRubricValue>>(
       Type.Object(
         {},
         {
           minProperties: MIN_CHOICE_OPTIONS,
           maxProperties: MAX_CHOICE_OPTIONS,
-          additionalProperties: rubricValueSchema,
+          additionalProperties: choiceRubricValueSchema,
         },
       ),
     ),
   }),
   Type.Object({
     type: Type.Literal("score"),
-    instructions: Type.Unknown(),
+    instructions: questionValueSchema,
     criteria: Type.Unsafe<unknown[]>(
-      Type.Array(Type.Unknown(), { minItems: MIN_SCORE_LEVELS, maxItems: MAX_SCORE_LEVELS }),
+      Type.Array(questionValueSchema, {
+        minItems: MIN_SCORE_LEVELS,
+        maxItems: MAX_SCORE_LEVELS,
+      }),
     ),
   }),
 ]);
@@ -123,13 +130,41 @@ function ownKeyRecord<TValue>(
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
 }
 
-function isRubricValue(value: unknown): value is RubricValue {
+function isJsonValue(value: unknown, seen = new Set<object>()): boolean {
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "boolean" ||
+    (typeof value === "number" && Number.isFinite(value))
+  ) {
+    return true;
+  }
+  if (typeof value !== "object" || (!Array.isArray(value) && !isPlainObject(value))) return false;
+  if (seen.has(value)) return false;
+  seen.add(value);
+  const valid = Array.isArray(value)
+    ? value.every((item) => isJsonValue(item, seen))
+    : Object.getOwnPropertyNames(value).every((key) =>
+        isJsonValue((value as Record<string, unknown>)[key], seen),
+      );
+  seen.delete(value);
+  return valid;
+}
+
+function isQuestionValue(value: unknown): value is QuestionValue {
   return (
-    typeof value === "string" || value === null || Array.isArray(value) || isPlainObject(value)
+    (typeof value === "string" || Array.isArray(value) || isPlainObject(value)) &&
+    isJsonValue(value)
   );
+}
+
+function isChoiceRubricValue(value: unknown): value is ChoiceRubricValue {
+  return value === null || isQuestionValue(value);
 }
 
 function validateQuestion(id: string, raw: unknown): Question {
@@ -145,6 +180,9 @@ function validateQuestion(id: string, raw: unknown): Question {
     throw new Error(`Question "${id}" must provide "instructions"`);
   }
   const instructions = raw.instructions;
+  if (!isQuestionValue(instructions)) {
+    throw new Error(`Question "${id}" instructions must be a string, object, or array`);
+  }
 
   if (type === "noul") {
     if (!Object.hasOwn(raw, "criteria")) return { type, instructions };
@@ -158,7 +196,13 @@ function validateQuestion(id: string, raw: unknown): Question {
       if (key !== "true" && key !== "false") {
         throw new Error(`Question "${id}" noul criteria may only describe "true" and/or "false"`);
       }
-      criteria[key] = raw.criteria[key];
+      const value = raw.criteria[key];
+      if (!isQuestionValue(value)) {
+        throw new Error(
+          `Question "${id}" noul criterion "${key}" must be a string, object, or array`,
+        );
+      }
+      criteria[key] = value;
     }
     return { type, instructions, criteria };
   }
@@ -178,7 +222,7 @@ function validateQuestion(id: string, raw: unknown): Question {
     const optionsByKey = raw.criteria;
     const criteria = ownKeyRecord(optionsByKey, (option) => {
       const value = optionsByKey[option];
-      if (!isRubricValue(value)) {
+      if (!isChoiceRubricValue(value)) {
         throw new Error(`Question "${id}" option "${option}" must describe the option`);
       }
       return value;
@@ -197,8 +241,8 @@ function validateQuestion(id: string, raw: unknown): Question {
     );
   }
   raw.criteria.forEach((level, index) => {
-    if (!isRubricValue(level)) {
-      throw new Error(`Question "${id}" score level ${index} must describe the level`);
+    if (!isQuestionValue(level)) {
+      throw new Error(`Question "${id}" score level ${index} must be a string, object, or array`);
     }
   });
   return { type, instructions, criteria: [...raw.criteria] };
@@ -219,18 +263,59 @@ function isTokenCount(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }
 
+function isProbability(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
+}
+
+function hasProbabilityKeys(value: unknown, keys: readonly string[]): boolean {
+  if (!isPlainObject(value)) return false;
+  const actual = Object.getOwnPropertyNames(value);
+  return (
+    actual.length === keys.length &&
+    keys.every((key) => Object.hasOwn(value, key) && isProbability(value[key]))
+  );
+}
+
 function validateAnswer(id: string, requested: Question, answer: unknown): void {
   if (!isPlainObject(answer) || answer.type !== requested.type) {
     throw new Error(`Answer "${id}" must be a ${requested.type} answer`);
   }
-  if (requested.type === "noul" && typeof answer.noul !== "number") {
-    throw new Error(`Answer "${id}" is missing a numeric noul value`);
+  if (requested.type === "noul") {
+    if (!isProbability(answer.noul)) {
+      throw new Error(`Answer "${id}" is missing a valid noul probability`);
+    }
+    return;
   }
-  if (requested.type === "choice" && typeof answer.choice !== "string") {
-    throw new Error(`Answer "${id}" is missing a chosen option`);
+
+  if (!isProbability(answer.confidence)) {
+    throw new Error(`Answer "${id}" is missing a valid confidence`);
   }
-  if (requested.type === "score" && typeof answer.score !== "number") {
-    throw new Error(`Answer "${id}" is missing a numeric score value`);
+
+  if (requested.type === "choice") {
+    const options = Object.getOwnPropertyNames(requested.criteria);
+    if (
+      typeof answer.choice !== "string" ||
+      !Object.hasOwn(requested.criteria, answer.choice) ||
+      !hasProbabilityKeys(answer.probabilities, options)
+    ) {
+      throw new Error(`Answer "${id}" is not a valid choice answer`);
+    }
+    return;
+  }
+
+  const levels = requested.criteria.map((_, index) => String(index));
+  const legend = answer.legend;
+  if (
+    typeof answer.score !== "number" ||
+    !Number.isFinite(answer.score) ||
+    answer.score < 0 ||
+    answer.score > requested.criteria.length - 1 ||
+    !hasProbabilityKeys(answer.probabilities, levels) ||
+    !isPlainObject(legend) ||
+    Object.getOwnPropertyNames(legend).length !== levels.length ||
+    !levels.every((level) => Object.hasOwn(legend, level))
+  ) {
+    throw new Error(`Answer "${id}" is not a valid score answer`);
   }
 }
 
@@ -272,6 +357,8 @@ async function attemptDecision(
   const timeoutSignal = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
   const signal = callerSignal ? AbortSignal.any([callerSignal, timeoutSignal]) : timeoutSignal;
 
+  if (callerSignal?.aborted) return { kind: "cancelled" };
+
   let response: Response;
   try {
     response = await fetch(endpoint, {
@@ -288,30 +375,35 @@ async function attemptDecision(
     return { kind: "retryable", reason: timeoutSignal.aborted ? "timeout" : "transport" };
   }
 
-  if (response.status === 400 || response.status === 422) {
-    return { kind: "terminal", status: response.status };
-  }
+  if (callerSignal?.aborted) return { kind: "cancelled" };
   if (!response.ok) {
-    return { kind: "retryable", status: response.status };
+    return [401, 403, 429, 529].includes(response.status) || response.status >= 500
+      ? { kind: "retryable", status: response.status }
+      : { kind: "terminal", status: response.status };
   }
 
   let payload: unknown;
   try {
     payload = await response.json();
   } catch {
-    return { kind: "retryable", reason: "malformed" };
+    if (callerSignal?.aborted) return { kind: "cancelled" };
+    return {
+      kind: "retryable",
+      reason: timeoutSignal.aborted ? "timeout" : "malformed",
+    };
   }
 
+  if (callerSignal?.aborted) return { kind: "cancelled" };
   const decision = parseDecision(payload, questions);
   return decision ? { kind: "ok", decision } : { kind: "retryable", reason: "malformed" };
 }
 
 function failureMessage(backendLabel: string, attempt: Failure): string {
   if (attempt.kind === "cancelled") {
-    return "typesafe_decide was cancelled by the caller";
+    return `${backendLabel} request was cancelled by the caller`;
   }
   if (attempt.kind === "terminal") {
-    return `TypeSafe rejected the request with status ${attempt.status}`;
+    return `${backendLabel} rejected the request with status ${attempt.status}`;
   }
   if ("status" in attempt) {
     return `${backendLabel} failed with status ${attempt.status}`;
@@ -320,6 +412,12 @@ function failureMessage(backendLabel: string, attempt: Failure): string {
     return `${backendLabel} failed after a ${REQUEST_TIMEOUT_MS / 1000}s timeout`;
   }
   return `${backendLabel} failed after a ${attempt.reason} failure`;
+}
+
+function throwIfCancelled(signal: AbortSignal | undefined, backendLabel: string): void {
+  if (signal?.aborted) {
+    throw new Error(failureMessage(backendLabel, { kind: "cancelled" }));
+  }
 }
 
 function nonBlank(value: string | undefined): string | undefined {
@@ -343,15 +441,30 @@ export function registerTypeSafeDecisionTool(pi: ExtensionAPI): void {
     parameters: decideParameters as never,
 
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+      if (
+        !(
+          typeof params.state === "string" ||
+          Array.isArray(params.state) ||
+          isPlainObject(params.state)
+        ) ||
+        !isJsonValue(params.state)
+      ) {
+        throw new Error("state must be a JSON string, object, or array");
+      }
       const questions = validateQuestions(params.questions);
       const fallbackKey = () => resolveKey(ctx.modelRegistry.getApiKeyForProvider("command-code"));
+      throwIfCancelled(signal, "TypeSafe");
 
-      const directKey =
-        (await resolveKey(ctx.modelRegistry.getApiKeyForProvider("typesafe"))) ??
-        nonBlank(process.env.TYPESAFE_API_KEY);
+      const registeredDirectKey = await resolveKey(
+        ctx.modelRegistry.getApiKeyForProvider("typesafe"),
+      );
+      throwIfCancelled(signal, "TypeSafe");
+      const directKey = registeredDirectKey ?? nonBlank(process.env.TYPESAFE_API_KEY);
 
       if (!directKey) {
+        throwIfCancelled(signal, "Command Code");
         const key = await fallbackKey();
+        throwIfCancelled(signal, "Command Code");
         if (!key) {
           throw new Error(
             "no TypeSafe or Command Code credentials are configured for typesafe_decide",
@@ -382,7 +495,9 @@ export function registerTypeSafeDecisionTool(pi: ExtensionAPI): void {
         throw new Error(failureMessage("TypeSafe", direct));
       }
 
+      throwIfCancelled(signal, "Command Code");
       const key = await fallbackKey();
+      throwIfCancelled(signal, "Command Code");
       if (!key) {
         throw new Error(failureMessage("TypeSafe", direct));
       }
