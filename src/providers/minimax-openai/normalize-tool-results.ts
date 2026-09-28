@@ -7,9 +7,10 @@ import type { AssistantMessage, Context, ToolCall, ToolResultMessage } from "@ea
  * corresponding tool_use blocks in the preceding assistant message.
  * MiniMax requires strict ordering — mismatches cause 400 errors.
  *
- * Returns a new Context; does not mutate the input.
+ * Returns a new Context; does not mutate the input. The exact input type is
+ * preserved so a branded `TranscriptContext` stays branded downstream.
  */
-export function normalizeToolResults(context: Context): Context {
+export function normalizeToolResults<TContext extends Context>(context: TContext): TContext {
   const messages = [...context.messages];
   let changed = false;
 

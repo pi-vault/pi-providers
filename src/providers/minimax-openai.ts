@@ -3,10 +3,10 @@
 import type {
   Api,
   AssistantMessageEventStream,
-  Context,
   Model,
   OpenAICompletionsCompat,
   SimpleStreamOptions,
+  TranscriptContext,
 } from "@earendil-works/pi-ai";
 import { getApiProvider } from "@earendil-works/pi-ai/compat";
 import type { ExtensionAPI, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
@@ -68,7 +68,7 @@ function registerMiniMaxVariant(
     api: name as Api,
     streamSimple(
       model: Model<Api>,
-      context: Context,
+      context: TranscriptContext,
       options?: SimpleStreamOptions,
     ): AssistantMessageEventStream {
       const driver = getApiProvider("openai-completions");
