@@ -2,7 +2,7 @@
   "name": "@pi-vault/pi-providers",
   "version": "0.3.1",
   "type": "module",
-  "description": "Pi extension that adds MiniMax, StepFun, and Command Code model providers",
+  "description": "Pi extension that adds MiniMax, StepFun, and Command Code model providers plus a TypeSafe Jev decision tool",
   "author": "Lanh Hoang <lanhhoang@users.noreply.github.com>",
   "license": "MIT",
   "homepage": "https://github.com/pi-vault/pi-providers#readme",
@@ -23,6 +23,8 @@
     "minimax",
     "stepfun",
     "command-code",
+    "typesafe",
+    "jev",
     "openai-compatible"
   ],
   "scripts": {

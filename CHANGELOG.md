@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `typesafe_decide`, a non-chat tool that answers typed Noul, Choice, and Score questions about a JSON state with TypeSafe Jev and returns structured probabilities instead of generated text. It calls TypeSafe directly with a host-resolved `typesafe` credential or `TYPESAFE_API_KEY`, and falls back to a single Command Code `typesafe/jev` request when direct access is absent or fails retryably. Direct `400` / `422` responses and cancellation are terminal and never fall back. System One requests never inherit `CMD_ZDR`, even when `CMD_ZDR=1`, because `typesafe/jev` has no ZDR-capable Command Code upstream. The tool does not provide an enforced-ZDR mode: a direct credential neither disables retryable Command Code fallback nor establishes ZDR for direct TypeSafe requests.
+
+### Changed
+
+- The bundled Command Code snapshot grew from 62 to 82 models, captured 2026-09-27.
+- Command Code routing is now declared per catalog record: `/messages` takes precedence, `/chat/completions` is used otherwise, and records advertising only `/responses` are filtered out because this package does not implement Responses API transport.
+- Refreshed Command Code pricing estimates against the 2026-09-27 rates.
+
 ## 2026-08-30 - [0.3.1]
 
 ### Changed
