@@ -628,7 +628,35 @@ describe("TypeSafe decide fallback policy", () => {
         confidence: 0.5,
       },
     ],
+    [
+      "Choice probabilities that do not sum to one",
+      {
+        type: "choice",
+        choice: "billing",
+        probabilities: { billing: 0.9, technical: 0.9 },
+        confidence: 0.5,
+      },
+    ],
+    [
+      "Choice selecting a lower-probability option",
+      {
+        type: "choice",
+        choice: "billing",
+        probabilities: { billing: 0.2, technical: 0.8 },
+        confidence: 0.5,
+      },
+    ],
     ["Score missing distribution metadata", { type: "score", score: 1 }],
+    [
+      "Score inconsistent with its probability-weighted value",
+      {
+        type: "score",
+        score: 0,
+        legend: { "0": "Calm", "1": "Frustrated", "2": "Very angry" },
+        probabilities: { "0": 0, "1": 1, "2": 0 },
+        confidence: 0.5,
+      },
+    ],
   ])("falls back on malformed answer data: %s", async (label, malformedAnswer) => {
     const harness = createHarness({ typesafeKey: DIRECT_KEY, commandKey: FALLBACK_KEY });
     const malformed = structuredClone(successBody);

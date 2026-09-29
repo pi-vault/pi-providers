@@ -13,6 +13,7 @@ const MIN_CHOICE_OPTIONS = 2;
 const MAX_CHOICE_OPTIONS = 255;
 const MIN_SCORE_LEVELS = 2;
 const MAX_SCORE_LEVELS = 10;
+const PROBABILITY_TOLERANCE = 1e-6;
 
 interface NoulQuestion {
   type: "noul";
@@ -267,12 +268,17 @@ function isProbability(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
 }
 
-function hasProbabilityKeys(value: unknown, keys: readonly string[]): boolean {
+function isProbabilityDistribution(
+  value: unknown,
+  keys: readonly string[],
+): value is Record<string, number> {
   if (!isPlainObject(value)) return false;
   const actual = Object.getOwnPropertyNames(value);
   return (
     actual.length === keys.length &&
-    keys.every((key) => Object.hasOwn(value, key) && isProbability(value[key]))
+    keys.every((key) => Object.hasOwn(value, key) && isProbability(value[key])) &&
+    Math.abs(keys.reduce((sum, key) => sum + (value[key] as number), 0) - 1) <=
+      PROBABILITY_TOLERANCE
   );
 }
 
@@ -293,11 +299,16 @@ function validateAnswer(id: string, requested: Question, answer: unknown): void 
 
   if (requested.type === "choice") {
     const options = Object.getOwnPropertyNames(requested.criteria);
+    const probabilities = answer.probabilities;
     if (
       typeof answer.choice !== "string" ||
       !Object.hasOwn(requested.criteria, answer.choice) ||
-      !hasProbabilityKeys(answer.probabilities, options)
+      !isProbabilityDistribution(probabilities, options)
     ) {
+      throw new Error(`Answer "${id}" is not a valid choice answer`);
+    }
+    const highestProbability = Math.max(...options.map((option) => probabilities[option]));
+    if (probabilities[answer.choice] + PROBABILITY_TOLERANCE < highestProbability) {
       throw new Error(`Answer "${id}" is not a valid choice answer`);
     }
     return;
@@ -305,16 +316,21 @@ function validateAnswer(id: string, requested: Question, answer: unknown): void 
 
   const levels = requested.criteria.map((_, index) => String(index));
   const legend = answer.legend;
+  const probabilities = answer.probabilities;
   if (
     typeof answer.score !== "number" ||
     !Number.isFinite(answer.score) ||
     answer.score < 0 ||
     answer.score > requested.criteria.length - 1 ||
-    !hasProbabilityKeys(answer.probabilities, levels) ||
+    !isProbabilityDistribution(probabilities, levels) ||
     !isPlainObject(legend) ||
     Object.getOwnPropertyNames(legend).length !== levels.length ||
     !levels.every((level) => Object.hasOwn(legend, level))
   ) {
+    throw new Error(`Answer "${id}" is not a valid score answer`);
+  }
+  const weightedScore = levels.reduce((sum, level, index) => sum + index * probabilities[level], 0);
+  if (Math.abs(answer.score - weightedScore) > PROBABILITY_TOLERANCE) {
     throw new Error(`Answer "${id}" is not a valid score answer`);
   }
 }
