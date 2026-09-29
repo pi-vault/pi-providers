@@ -842,6 +842,26 @@ describe("Command Code live catalog", () => {
     expect(models.getModel("command-code", cached.id)).toEqual(cached);
   });
 
+  it("keeps the bundled catalog after restarting from a first-run failure cache", async () => {
+    const fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response("down", { status: 503 }));
+    const modelsStore = new InMemoryModelsStore();
+    const first = await createRefreshModels(modelsStore);
+
+    const failed = await first.models.refresh({ providers: ["command-code"] });
+
+    expect(failed.errors.get("command-code")).toBeInstanceOf(Error);
+    expect(first.models.getModels("command-code")).toHaveLength(82);
+    expect(await modelsStore.read("command-code")).toMatchObject({ models: [] });
+
+    const restarted = await createRefreshModels(modelsStore);
+    await restarted.models.refresh({ providers: ["command-code"] });
+
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(restarted.models.getModels("command-code")).toHaveLength(82);
+  });
+
   it("fetches and stores a fresh catalog when forced", async () => {
     const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(validPayload));
     const { models, modelsStore } = await createStoredRefreshModels(Date.now());

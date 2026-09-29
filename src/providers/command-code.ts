@@ -122,11 +122,10 @@ export function createCommandCodeProvider(): Provider<"anthropic-messages" | "op
                   publication.update?.();
                   const publishedModels = publication.persist?.models ?? context.stored?.models;
                   if (publishedModels) {
-                    authoritativeModelIds = new Set(
-                      publishedModels
-                        .filter((model) => model.provider === provider.id)
-                        .map((model) => model.id),
-                    );
+                    const modelIds = publishedModels
+                      .filter((model) => model.provider === provider.id)
+                      .map((model) => model.id);
+                    authoritativeModelIds = modelIds.length > 0 ? new Set(modelIds) : undefined;
                   }
                 }
               : undefined,

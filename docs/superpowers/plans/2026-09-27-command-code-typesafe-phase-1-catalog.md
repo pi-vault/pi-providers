@@ -75,4 +75,3 @@
 ## Acceptance
 
 Run `pnpm vitest run tests/providers/command-code.test.ts` and `pnpm check`. The provider must expose the 82-model chat snapshot, route from catalog endpoint declarations, preserve cached models after malformed or unusable refreshes, and keep existing authentication, ZDR, throttling, and cancellation behavior.
-
