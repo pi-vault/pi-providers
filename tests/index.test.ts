@@ -16,7 +16,7 @@ describe("providers extension", () => {
     expect(commandCodeProvider).toMatchObject({ id: "command-code" });
     expect(
       new Set(commandCodeProvider.getModels().map((model: { api: string }) => model.api)),
-    ).toEqual(new Set(["anthropic-messages", "openai-completions"]));
+    ).toEqual(new Set(["anthropic-messages", "openai-completions", "openai-responses"]));
     expect(registerProvider.mock.calls.slice(1).map((call: unknown[]) => call[0])).toEqual([
       "minimax-openai",
       "minimax-openai-cn",

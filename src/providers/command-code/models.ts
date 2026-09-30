@@ -18,10 +18,13 @@ export interface CommandCodeCatalogRecord {
   maxOutputTokens?: number;
 }
 
-type CommandCodeModel = Model<"anthropic-messages"> | Model<"openai-completions">;
+type CommandCodeModel =
+  | Model<"anthropic-messages">
+  | Model<"openai-completions">
+  | Model<"openai-responses">;
 
 const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
-const COMMAND_CODE_FALLBACK_MAX_TOKENS = 32_768;
+export const COMMAND_CODE_FALLBACK_MAX_TOKENS = 32_768;
 
 const OPENAI_COMPAT: OpenAICompletionsCompat = {
   supportsStore: false,
@@ -86,8 +89,12 @@ function donorFor(record: CommandCodeCatalogRecord): Model<Api> | undefined {
 export function modelFromCatalogRecord(record: CommandCodeCatalogRecord): CommandCodeModel {
   const donor = donorFor(record);
   const usesMessages = record.supportedEndpoints.includes("/messages");
-  const usesCompletions = record.supportedEndpoints.includes("/chat/completions");
-  if (!usesMessages && !usesCompletions) {
+  const hasResponses = record.supportedEndpoints.includes("/responses");
+  const hasCompletions = record.supportedEndpoints.includes("/chat/completions");
+  const usesResponses =
+    !usesMessages && hasResponses && (record.id.startsWith("gpt-") || !hasCompletions);
+  const usesCompletions = !usesMessages && !usesResponses && hasCompletions;
+  if (!usesMessages && !usesCompletions && !usesResponses) {
     throw new Error(`Unsupported Command Code model endpoints: ${record.id}`);
   }
   const model = {
@@ -119,7 +126,9 @@ export function modelFromCatalogRecord(record: CommandCodeCatalogRecord): Comman
       : anthropic;
   }
 
-  return { ...model, api: "openai-completions", compat: OPENAI_COMPAT };
+  return usesResponses
+    ? { ...model, api: "openai-responses" as const }
+    : { ...model, api: "openai-completions" as const, compat: OPENAI_COMPAT };
 }
 
 const COMMAND_CODE_CATALOG_SNAPSHOT = [

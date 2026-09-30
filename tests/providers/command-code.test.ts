@@ -44,7 +44,7 @@ function cachedLiveOnlyModel(): Model<"openai-completions"> {
     input: ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 32_000,
-    maxTokens: 16_384,
+    maxTokens: 32_000,
   };
 }
 
@@ -123,6 +123,17 @@ describe("Command Code catalog conversion", () => {
         supportedEndpoints: ["/chat/completions"],
       }).api,
     ).toBe("openai-completions");
+  });
+
+  it("routes GPT records to OpenAI Responses when advertised", () => {
+    expect(
+      modelFromCatalogRecord({
+        id: "gpt-6.1-sol",
+        name: "GPT-6.1 Sol",
+        contextWindow: 1_050_000,
+        supportedEndpoints: ["/chat/completions", "/responses"],
+      }).api,
+    ).toBe("openai-responses");
   });
 
   it("uses conservative defaults for an unknown model", () => {
@@ -560,7 +571,7 @@ describe("Command Code catalog conversion", () => {
     });
   });
 
-  it("creates a provider with both API families", () => {
+  it("creates a provider with all API families", () => {
     const provider = createCommandCodeProvider();
 
     expect(provider).toMatchObject({
@@ -570,7 +581,7 @@ describe("Command Code catalog conversion", () => {
     });
     expect(provider.getModels()).toHaveLength(86);
     expect(new Set(provider.getModels().map((model) => model.api))).toEqual(
-      new Set(["anthropic-messages", "openai-completions"]),
+      new Set(["anthropic-messages", "openai-completions", "openai-responses"]),
     );
     expect(provider.refreshModels).toBeTypeOf("function");
     expect(provider.auth.apiKey?.name).toBe("Command Code API key");
@@ -617,6 +628,11 @@ describe("Command Code catalog conversion", () => {
     expect(new URL(anthropic.url).pathname).toBe("/provider/v1/messages");
     expect(anthropic.headers.get("x-api-key")).toBe("test-key");
     expect(anthropic.headers.get("x-cmd-zdr")).toBe("1");
+
+    const responses = await captureRequest("gpt-6.1-sol");
+    expect(responses.url).toBe("https://api.commandcode.ai/provider/v1/responses");
+    expect(responses.headers.get("authorization")).toBe("Bearer test-key");
+    expect(responses.headers.get("x-cmd-zdr")).toBe("1");
   });
 });
 
@@ -706,10 +722,10 @@ describe("Command Code live catalog", () => {
         object: "list",
         data: [
           {
-            id: "responses-only",
-            name: "Responses Only",
+            id: "unknown-endpoint",
+            name: "Unknown Endpoint",
             context_length: 1000,
-            supported_endpoints: ["/responses"],
+            supported_endpoints: ["/future"],
           },
         ],
       },
@@ -861,7 +877,9 @@ describe("Command Code live catalog", () => {
     await models.refresh({ providers: ["command-code"], force: true });
 
     expect(models.getModel("command-code", "chat-model")).toBeDefined();
-    expect(models.getModel("command-code", "responses-only")).toBeUndefined();
+    expect(models.getModel("command-code", "responses-only")).toMatchObject({
+      api: "openai-responses",
+    });
     expect(models.getModel("command-code", "unknown-endpoint")).toBeUndefined();
   });
 
@@ -874,7 +892,7 @@ describe("Command Code live catalog", () => {
             id: "claude-sonnet-5",
             name: "Claude Sonnet 5",
             context_length: 1_000_000,
-            supported_endpoints: ["/responses"],
+            supported_endpoints: ["/future"],
           },
           {
             id: "new-model",
@@ -917,6 +935,37 @@ describe("Command Code live catalog", () => {
     expect(models.getModel("command-code", "claude-sonnet-5")).toBeUndefined();
   });
 
+  it("migrates legacy output limits without capping versioned explicit limits", async () => {
+    const modelsStore = new InMemoryModelsStore();
+    const legacyModel = {
+      ...cachedLiveOnlyModel(),
+      id: "deepseek/deepseek-v4.1-flash",
+      name: "DeepSeek V4.1 Flash",
+      contextWindow: 1_000_000,
+      maxTokens: 943_718,
+    } satisfies Model<"openai-completions">;
+    await modelsStore.write("command-code", { models: [legacyModel], checkedAt: Date.now() });
+
+    const legacy = await createRefreshModels(modelsStore);
+    await legacy.models.refresh({ providers: ["command-code"], allowNetwork: false });
+
+    expect(legacy.models.getModel("command-code", legacyModel.id)?.maxTokens).toBe(32_768);
+    expect((await modelsStore.read("command-code"))?.models[0]?.maxTokens).toBe(32_768);
+
+    const versionedModel = { ...legacyModel, maxTokens: 393_216 };
+    const versionedEntry = {
+      models: [versionedModel],
+      checkedAt: Date.now(),
+      commandCodeCatalogVersion: 1,
+    };
+    await modelsStore.write("command-code", versionedEntry);
+
+    const versioned = await createRefreshModels(modelsStore);
+    await versioned.models.refresh({ providers: ["command-code"], allowNetwork: false });
+
+    expect(versioned.models.getModel("command-code", versionedModel.id)?.maxTokens).toBe(393_216);
+  });
+
   it("skips a fresh non-forced online refresh without rewriting checkedAt", async () => {
     const checkedAt = Date.now();
     const fetch = vi.spyOn(globalThis, "fetch");
@@ -926,7 +975,11 @@ describe("Command Code live catalog", () => {
 
     expect(fetch).not.toHaveBeenCalled();
     expect(models.getModel("command-code", cached.id)).toEqual(cached);
-    expect(await modelsStore.read("command-code")).toEqual({ models: [cached], checkedAt });
+    expect(await modelsStore.read("command-code")).toEqual({
+      models: [cached],
+      checkedAt,
+      commandCodeCatalogVersion: 1,
+    });
   });
 
   it("fetches and stores a stale non-forced catalog", async () => {
