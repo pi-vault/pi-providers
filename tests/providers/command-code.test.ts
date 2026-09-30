@@ -145,7 +145,7 @@ describe("Command Code catalog conversion", () => {
         supportedEndpoints: ["/chat/completions"],
       }),
     ).toMatchObject({
-      reasoning: false,
+      reasoning: true,
       input: ["text"],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       maxTokens: 32_000,
@@ -510,7 +510,7 @@ describe("Command Code catalog conversion", () => {
     }
   });
 
-  it("uses Pi metadata while preserving Command identity and context", () => {
+  it("uses donor metadata when live capability metadata is absent", () => {
     expect(
       modelFromCatalogRecord({
         id: "claude-sonnet-5",
@@ -527,7 +527,56 @@ describe("Command Code catalog conversion", () => {
       cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
       thinkingLevelMap: { xhigh: "xhigh", max: "max" },
       compat: { forceAdaptiveThinking: true },
+      });
+  });
+
+  it("prefers Command Code metadata over donor and bundled metadata", () => {
+    expect(
+      modelFromCatalogRecord({
+        id: "claude-sonnet-5",
+        name: "Command Claude",
+        contextWindow: 1_000_000,
+        supportedEndpoints: ["/messages"],
+        reasoning: false,
+        input: ["text"],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      }),
+    ).toMatchObject({
+      reasoning: false,
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     });
+  });
+
+  it("uses official capability defaults when no Pi donor exists", () => {
+    expect(
+      modelFromCatalogRecord({
+        id: "gpt-future",
+        name: "GPT Future",
+        contextWindow: 100_000,
+        supportedEndpoints: ["/responses"],
+      }),
+    ).toMatchObject({ reasoning: true, input: ["text", "image"] });
+
+    expect(
+      modelFromCatalogRecord({
+        id: "vendor/future",
+        name: "Vendor Future",
+        contextWindow: 100_000,
+        supportedEndpoints: ["/chat/completions"],
+      }),
+    ).toMatchObject({ reasoning: true, input: ["text"] });
+  });
+
+  it("forces adaptive thinking for future Claude families without a donor", () => {
+    expect(
+      modelFromCatalogRecord({
+        id: "claude-mythos-5",
+        name: "Claude Mythos 5",
+        contextWindow: 1_000_000,
+        supportedEndpoints: ["/messages"],
+      }),
+    ).toMatchObject({ compat: { forceAdaptiveThinking: true } });
   });
 
   it.each([
@@ -672,6 +721,62 @@ describe("Command Code live catalog", () => {
       expect.arrayContaining([expect.objectContaining({ id: "new-model" })]),
     );
     expect(stored?.checkedAt).toEqual(expect.any(Number));
+  });
+
+  it("parses and persists optional Command Code metadata", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({
+        object: "list",
+        data: [
+          {
+            id: "metadata-model",
+            name: "Metadata Model",
+            context_length: 32_000,
+            supported_endpoints: ["/chat/completions"],
+            pricing: { input: 0, output: 9, cache_read: 0.25 },
+            modalities: { input: ["text", "image"] },
+            reasoning: false,
+          },
+        ],
+      }),
+    );
+    const { models, modelsStore } = await createRefreshModels();
+
+    await models.refresh({ providers: ["command-code"], force: true });
+
+    const expected = {
+      reasoning: false,
+      input: ["text", "image"],
+      cost: { input: 0, output: 9, cacheRead: 0.25, cacheWrite: 0 },
+    };
+    expect(models.getModel("command-code", "metadata-model")).toMatchObject(expected);
+    expect(
+      (await modelsStore.read("command-code"))?.models,
+    ).toEqual(expect.arrayContaining([expect.objectContaining({ id: "metadata-model", ...expected })]));
+  });
+
+  it("treats modalities without input as absent metadata", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({
+        object: "list",
+        data: [
+          {
+            id: "claude-sonnet-5",
+            name: "Claude Sonnet 5",
+            context_length: 1_000_000,
+            supported_endpoints: ["/messages"],
+            modalities: {},
+          },
+        ],
+      }),
+    );
+    const { models } = await createRefreshModels();
+
+    await models.refresh({ providers: ["command-code"], force: true });
+
+    expect(models.getModel("command-code", "claude-sonnet-5")).toMatchObject({
+      input: ["text", "image"],
+    });
   });
 
   const invalidCases: Array<[name: string, payload: unknown, status?: number]> = [
@@ -823,6 +928,96 @@ describe("Command Code live catalog", () => {
             context_length: 1000,
             max_output_tokens: "32768",
             supported_endpoints: ["/messages"],
+          },
+        ],
+      },
+    ],
+    [
+      "array pricing",
+      {
+        object: "list",
+        data: [
+          {
+            id: "id",
+            name: "Name",
+            context_length: 1000,
+            supported_endpoints: ["/messages"],
+            pricing: [],
+          },
+        ],
+      },
+    ],
+    [
+      "negative pricing input",
+      {
+        object: "list",
+        data: [
+          {
+            id: "id",
+            name: "Name",
+            context_length: 1000,
+            supported_endpoints: ["/messages"],
+            pricing: { input: -1 },
+          },
+        ],
+      },
+    ],
+    [
+      "string pricing output",
+      {
+        object: "list",
+        data: [
+          {
+            id: "id",
+            name: "Name",
+            context_length: 1000,
+            supported_endpoints: ["/messages"],
+            pricing: { output: "9" },
+          },
+        ],
+      },
+    ],
+    [
+      "array modalities",
+      {
+        object: "list",
+        data: [
+          {
+            id: "id",
+            name: "Name",
+            context_length: 1000,
+            supported_endpoints: ["/messages"],
+            modalities: [],
+          },
+        ],
+      },
+    ],
+    [
+      "non-string modality input",
+      {
+        object: "list",
+        data: [
+          {
+            id: "id",
+            name: "Name",
+            context_length: 1000,
+            supported_endpoints: ["/messages"],
+            modalities: { input: ["text", 1] },
+          },
+        ],
+      },
+    ],
+    [
+      "string reasoning",
+      {
+        object: "list",
+        data: [
+          {
+            id: "id",
+            name: "Name",
+            context_length: 1000,
+            supported_endpoints: ["/messages"],
+            reasoning: "true",
           },
         ],
       },

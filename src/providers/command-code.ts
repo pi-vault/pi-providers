@@ -19,6 +19,10 @@ import {
 const CATALOG_REFRESH_INTERVAL_MS = 4 * 60 * 60 * 1000;
 const COMMAND_CODE_CATALOG_VERSION = 1;
 
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
 type CommandCodeStoredCatalog = NonNullable<RefreshModelsContext["stored"]> & {
   commandCodeCatalogVersion?: number;
 };
@@ -64,10 +68,16 @@ function parseCommandCodeModels(value: unknown) {
   const records: CommandCodeCatalogRecord[] = payload.data.map((entry) => {
     if (!entry || typeof entry !== "object") throw new Error("Invalid Command Code model catalog");
 
-    const { id, name, context_length, max_output_tokens, supported_endpoints } = entry as Record<
-      string,
-      unknown
-    >;
+    const {
+      id,
+      name,
+      context_length,
+      max_output_tokens,
+      supported_endpoints,
+      pricing,
+      modalities,
+      reasoning,
+    } = entry as Record<string, unknown>;
     if (
       typeof id !== "string" ||
       !id.trim() ||
@@ -86,12 +96,51 @@ function parseCommandCodeModels(value: unknown) {
       throw new Error("Invalid Command Code model catalog");
     }
 
+    let cost: CommandCodeCatalogRecord["cost"];
+    if (pricing !== undefined) {
+      if (!isObjectRecord(pricing)) throw new Error("Invalid Command Code model catalog");
+      const { input, output, cache_read, cache_write } = pricing;
+      const prices = [input, output, cache_read, cache_write];
+      if (
+        prices.some(
+          (price) => price !== undefined && (typeof price !== "number" || !Number.isFinite(price) || price < 0),
+        )
+      ) {
+        throw new Error("Invalid Command Code model catalog");
+      }
+      cost = {
+        input: (input as number | undefined) ?? 0,
+        output: (output as number | undefined) ?? 0,
+        cacheRead: (cache_read as number | undefined) ?? 0,
+        cacheWrite: (cache_write as number | undefined) ?? 0,
+      };
+    }
+
+    let input: ("text" | "image")[] | undefined;
+    if (modalities !== undefined) {
+      if (!isObjectRecord(modalities)) throw new Error("Invalid Command Code model catalog");
+      const modalityInput = modalities.input;
+      if (modalityInput !== undefined) {
+        if (!Array.isArray(modalityInput) || !modalityInput.every((value) => typeof value === "string")) {
+          throw new Error("Invalid Command Code model catalog");
+        }
+        input = modalityInput.includes("image") ? ["text", "image"] : ["text"];
+      }
+    }
+
+    if (reasoning !== undefined && typeof reasoning !== "boolean") {
+      throw new Error("Invalid Command Code model catalog");
+    }
+
     return {
       id,
       name,
       contextWindow: context_length,
       supportedEndpoints: supported_endpoints,
       ...(max_output_tokens === undefined ? {} : { maxOutputTokens: max_output_tokens }),
+      ...(cost === undefined ? {} : { cost }),
+      ...(input === undefined ? {} : { input }),
+      ...(reasoning === undefined ? {} : { reasoning }),
     };
   });
 
