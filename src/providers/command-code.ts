@@ -3,18 +3,51 @@ import {
   createProvider,
   envApiKeyAuth,
   openAICompletionsApi,
+  openAIResponsesApi,
   type Provider,
   type RefreshModelsContext,
 } from "@earendil-works/pi-ai/compat";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   COMMAND_CODE_BASE_URL,
+  COMMAND_CODE_FALLBACK_MAX_TOKENS,
   commandCodeModels,
   type CommandCodeCatalogRecord,
   modelFromCatalogRecord,
 } from "./command-code/models.ts";
 
 const CATALOG_REFRESH_INTERVAL_MS = 4 * 60 * 60 * 1000;
+const COMMAND_CODE_CATALOG_VERSION = 1;
+
+type CommandCodeStoredCatalog = NonNullable<RefreshModelsContext["stored"]> & {
+  commandCodeCatalogVersion?: number;
+};
+
+function versionedCatalogEntry(entry: NonNullable<RefreshModelsContext["stored"]>) {
+  return { ...entry, commandCodeCatalogVersion: COMMAND_CODE_CATALOG_VERSION };
+}
+
+function migrateStoredCatalog(stored: RefreshModelsContext["stored"]) {
+  const versioned = stored as CommandCodeStoredCatalog | undefined;
+  if (!versioned || versioned.commandCodeCatalogVersion === COMMAND_CODE_CATALOG_VERSION) {
+    return { stored, migrated: false };
+  }
+
+  return {
+    stored: versionedCatalogEntry({
+      ...versioned,
+      models: versioned.models.map((model) =>
+        model.provider === "command-code"
+          ? {
+              ...model,
+              maxTokens: Math.min(COMMAND_CODE_FALLBACK_MAX_TOKENS, model.contextWindow),
+            }
+          : model,
+      ),
+    }),
+    migrated: true,
+  };
+}
 
 function parseCommandCodeModels(value: unknown) {
   const payload = value as { object?: unknown; data?: unknown };
@@ -31,7 +64,10 @@ function parseCommandCodeModels(value: unknown) {
   const records: CommandCodeCatalogRecord[] = payload.data.map((entry) => {
     if (!entry || typeof entry !== "object") throw new Error("Invalid Command Code model catalog");
 
-    const { id, name, context_length, supported_endpoints } = entry as Record<string, unknown>;
+    const { id, name, context_length, max_output_tokens, supported_endpoints } = entry as Record<
+      string,
+      unknown
+    >;
     if (
       typeof id !== "string" ||
       !id.trim() ||
@@ -40,13 +76,23 @@ function parseCommandCodeModels(value: unknown) {
       typeof context_length !== "number" ||
       !Number.isInteger(context_length) ||
       context_length <= 0 ||
+      (max_output_tokens !== undefined &&
+        (typeof max_output_tokens !== "number" ||
+          !Number.isInteger(max_output_tokens) ||
+          max_output_tokens <= 0)) ||
       !Array.isArray(supported_endpoints) ||
       !supported_endpoints.every((endpoint) => typeof endpoint === "string")
     ) {
       throw new Error("Invalid Command Code model catalog");
     }
 
-    return { id, name, contextWindow: context_length, supportedEndpoints: supported_endpoints };
+    return {
+      id,
+      name,
+      contextWindow: context_length,
+      supportedEndpoints: supported_endpoints,
+      ...(max_output_tokens === undefined ? {} : { maxOutputTokens: max_output_tokens }),
+    };
   });
 
   if (new Set(records.map((record) => record.id)).size !== records.length) {
@@ -55,7 +101,8 @@ function parseCommandCodeModels(value: unknown) {
 
   const chatRecords = records.filter((record) =>
     record.supportedEndpoints.some(
-      (endpoint) => endpoint === "/messages" || endpoint === "/chat/completions",
+      (endpoint) =>
+        endpoint === "/messages" || endpoint === "/chat/completions" || endpoint === "/responses",
     ),
   );
   if (chatRecords.length === 0) {
@@ -75,7 +122,9 @@ async function fetchCommandCodeModels(context: RefreshModelsContext) {
   return parseCommandCodeModels(await response.json());
 }
 
-export function createCommandCodeProvider(): Provider<"anthropic-messages" | "openai-completions"> {
+export function createCommandCodeProvider(): Provider<
+  "anthropic-messages" | "openai-completions" | "openai-responses"
+> {
   const headers = process.env.CMD_ZDR === "1" ? { "x-cmd-zdr": "1" } : undefined;
   let authoritativeModelIds: ReadonlySet<string> | undefined;
 
@@ -89,6 +138,7 @@ export function createCommandCodeProvider(): Provider<"anthropic-messages" | "op
     api: {
       "anthropic-messages": anthropicMessagesApi(),
       "openai-completions": openAICompletionsApi(),
+      "openai-responses": openAIResponsesApi(),
     },
   });
 
@@ -103,24 +153,34 @@ export function createCommandCodeProvider(): Provider<"anthropic-messages" | "op
 
   const generatedRefresh = provider.refreshModels;
   provider.refreshModels = async (context) => {
+    const migration = migrateStoredCatalog(context.stored);
+    const stored = migration.stored;
+    if (migration.migrated) {
+      if (!(await context.publish({ persist: stored }))) return;
+    }
     if (
       context.allowNetwork &&
       !context.force &&
-      context.stored?.checkedAt !== undefined &&
-      Date.now() - context.stored.checkedAt < CATALOG_REFRESH_INTERVAL_MS
+      stored?.checkedAt !== undefined &&
+      Date.now() - stored.checkedAt < CATALOG_REFRESH_INTERVAL_MS
     ) {
       return;
     }
     try {
       await generatedRefresh?.({
         ...context,
+        stored,
         publish: (publication) =>
           context.publish({
             ...publication,
+            persist:
+              publication.persist === null || publication.persist === undefined
+                ? publication.persist
+                : versionedCatalogEntry(publication.persist),
             update: publication.update
               ? () => {
                   publication.update?.();
-                  const publishedModels = publication.persist?.models ?? context.stored?.models;
+                  const publishedModels = publication.persist?.models ?? stored?.models;
                   if (publishedModels) {
                     const modelIds = publishedModels
                       .filter((model) => model.provider === provider.id)
@@ -134,10 +194,7 @@ export function createCommandCodeProvider(): Provider<"anthropic-messages" | "op
     } catch (error) {
       if (context.allowNetwork && !context.signal.aborted) {
         await context.publish({
-          persist: {
-            ...(context.stored ?? { models: [] }),
-            checkedAt: Date.now(),
-          },
+          persist: versionedCatalogEntry({ ...(stored ?? { models: [] }), checkedAt: Date.now() }),
         });
       }
       throw error;

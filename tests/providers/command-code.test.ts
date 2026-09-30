@@ -23,6 +23,7 @@ const validPayload = {
       id: "new-model",
       name: "New Model",
       context_length: 32_000,
+      max_output_tokens: 24_000,
       supported_endpoints: ["/chat/completions"],
     },
   ],
@@ -43,7 +44,7 @@ function cachedLiveOnlyModel(): Model<"openai-completions"> {
     input: ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 32_000,
-    maxTokens: 16_384,
+    maxTokens: 32_000,
   };
 }
 
@@ -124,6 +125,17 @@ describe("Command Code catalog conversion", () => {
     ).toBe("openai-completions");
   });
 
+  it("routes GPT records to OpenAI Responses when advertised", () => {
+    expect(
+      modelFromCatalogRecord({
+        id: "gpt-6.1-sol",
+        name: "GPT-6.1 Sol",
+        contextWindow: 1_050_000,
+        supportedEndpoints: ["/chat/completions", "/responses"],
+      }).api,
+    ).toBe("openai-responses");
+  });
+
   it("uses conservative defaults for an unknown model", () => {
     expect(
       modelFromCatalogRecord({
@@ -136,8 +148,39 @@ describe("Command Code catalog conversion", () => {
       reasoning: false,
       input: ["text"],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      maxTokens: 16_384,
+      maxTokens: 32_000,
     });
+  });
+
+  it("uses Command Code output limits instead of donor limits", () => {
+    expect(
+      modelFromCatalogRecord({
+        id: "deepseek/deepseek-v4.1-flash",
+        name: "DeepSeek V4.1 Flash",
+        contextWindow: 1_000_000,
+        supportedEndpoints: ["/chat/completions", "/responses"],
+      }).maxTokens,
+    ).toBe(32_768);
+
+    expect(
+      modelFromCatalogRecord({
+        id: "new/vendor-model",
+        name: "New Vendor Model",
+        contextWindow: 500_000,
+        maxOutputTokens: 393_216,
+        supportedEndpoints: ["/chat/completions"],
+      }).maxTokens,
+    ).toBe(393_216);
+
+    expect(
+      modelFromCatalogRecord({
+        id: "new/vendor-model",
+        name: "New Vendor Model",
+        contextWindow: 16_000,
+        maxOutputTokens: 32_768,
+        supportedEndpoints: ["/chat/completions"],
+      }).maxTokens,
+    ).toBe(16_000);
   });
 
   it("routes a non-Claude ID to Anthropic Messages when /messages is declared", () => {
@@ -176,12 +219,15 @@ describe("Command Code catalog conversion", () => {
   it("bundles the captured Command Code catalog", () => {
     const addedIds = [
       "claude-fable-5-1",
+      "claude-sonnet-5-5",
       "claude-opus-5-5",
       "gpt-6-astra",
+      "gpt-6.1-sol",
       "gpt-6-sol",
       "gpt-6-luna",
       "deepseek/deepseek-v4-flash-fast",
       "deepseek/deepseek-v4.1-flash",
+      "deepseek/deepseek-v4.1-flash-fast",
       "z-ai/glm-5.3-flashx",
       "xiaomi/mimo-v2.6-pro",
       "xiaomi/mimo-v2.6-pro-ultraspeed",
@@ -194,14 +240,15 @@ describe("Command Code catalog conversion", () => {
       "stealth/space-bunny-alpha",
       "stealth/pixel-canary",
       "inclusionai/ling-3.0-flash-sante:free",
+      "inclusionai/ling-3.1-flash:free",
       "meta/muse-spark-1.3",
       "meta/muse-spark-1.3-contributor",
       "xai/grok-4.7",
     ];
     const ids = COMMAND_CODE_CATALOG.map((model) => model.id);
 
-    expect(COMMAND_CODE_CATALOG).toHaveLength(82);
-    expect(new Set(ids).size).toBe(82);
+    expect(COMMAND_CODE_CATALOG).toHaveLength(86);
+    expect(new Set(ids).size).toBe(86);
     expect(
       COMMAND_CODE_CATALOG.every(
         (model) =>
@@ -219,7 +266,7 @@ describe("Command Code catalog conversion", () => {
     );
     expect(
       COMMAND_CODE_CATALOG.filter((model) => model.supportedEndpoints.includes("/messages")),
-    ).toHaveLength(9);
+    ).toHaveLength(10);
     expect(
       COMMAND_CODE_CATALOG.filter(
         (model) =>
@@ -234,7 +281,7 @@ describe("Command Code catalog conversion", () => {
           model.supportedEndpoints.includes("/chat/completions") &&
           model.supportedEndpoints.includes("/responses"),
       ),
-    ).toHaveLength(65);
+    ).toHaveLength(68);
     expect(COMMAND_CODE_CATALOG.find((model) => model.id === "gpt-5.5")?.contextWindow).toBe(
       400_000,
     );
@@ -244,13 +291,14 @@ describe("Command Code catalog conversion", () => {
     expect(
       COMMAND_CODE_CATALOG.find((model) => model.id === "deepseek/deepseek-v4-pro")?.name,
     ).toBe("DeepSeek V4 Pro (latest)");
-    expect(commandCodeModels).toHaveLength(82);
+    expect(commandCodeModels).toHaveLength(86);
 
     const zeroCostIds = new Set([
       "poolside/laguna-s-2.1-free",
       "stealth/space-bunny-alpha",
       "stealth/pixel-canary",
       "inclusionai/ling-3.0-flash-sante:free",
+      "inclusionai/ling-3.1-flash:free",
     ]);
 
     expect(
@@ -281,6 +329,7 @@ describe("Command Code catalog conversion", () => {
       }).cost;
 
     const expectedCosts = {
+      "claude-sonnet-5-5": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
       "claude-sonnet-5": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
       "claude-fable-5-1": { input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5 },
       "claude-opus-5-5": { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 },
@@ -290,6 +339,13 @@ describe("Command Code catalog conversion", () => {
         cacheRead: 1,
         cacheWrite: 12.5,
         tiers: [{ inputTokensAbove: 272_000, input: 20, output: 75, cacheRead: 2, cacheWrite: 25 }],
+      },
+      "gpt-6.1-sol": {
+        input: 2,
+        output: 10,
+        cacheRead: 0.1,
+        cacheWrite: 2.5,
+        tiers: [{ inputTokensAbove: 272_000, input: 4, output: 15, cacheRead: 0.2, cacheWrite: 5 }],
       },
       "gpt-6-sol": {
         input: 2,
@@ -358,6 +414,12 @@ describe("Command Code catalog conversion", () => {
         cacheRead: 0.003,
         cacheWrite: 0,
       },
+      "deepseek/deepseek-v4.1-flash-fast": {
+        input: 0.16,
+        output: 0.58,
+        cacheRead: 0.016,
+        cacheWrite: 0,
+      },
       "MiniMaxAI/MiniMax-M3": { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0 },
       "z-ai/glm-5.3-flashx": { input: 0.37, output: 1.25, cacheRead: 0.075, cacheWrite: 0 },
       "xiaomi/mimo-v2.6-pro": { input: 0.435, output: 0.87, cacheRead: 0.0036, cacheWrite: 0 },
@@ -414,6 +476,12 @@ describe("Command Code catalog conversion", () => {
         cacheRead: 0,
         cacheWrite: 0,
       },
+      "inclusionai/ling-3.1-flash:free": {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+      },
       "meta/muse-spark-1.3": { input: 1.25, output: 4.25, cacheRead: 0.15, cacheWrite: 0 },
       "meta/muse-spark-1.3-contributor": {
         input: 0.1,
@@ -455,7 +523,7 @@ describe("Command Code catalog conversion", () => {
       contextWindow: 900_000,
       reasoning: true,
       input: ["text", "image"],
-      maxTokens: 128_000,
+      maxTokens: 32_768,
       cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
       thinkingLevelMap: { xhigh: "xhigh", max: "max" },
       compat: { forceAdaptiveThinking: true },
@@ -463,12 +531,12 @@ describe("Command Code catalog conversion", () => {
   });
 
   it.each([
-    ["deepseek/deepseek-v4-flash-vision-exp", "DeepSeek V4 Flash Vision (exp)", 1_000_000, 943_718],
-    ["z-ai/glm-5.3-flash", "GLM-5.3 Flash", 1_048_576, 131_072],
+    ["deepseek/deepseek-v4-flash-vision-exp", "DeepSeek V4 Flash Vision (exp)", 1_000_000, 32_768],
+    ["z-ai/glm-5.3-flash", "GLM-5.3 Flash", 1_048_576, 32_768],
     ["Qwen/Qwen3.8-27B", "Qwen 3.8 27B", 262_144, 32_768],
-    ["Qwen/Qwen3.8-Flash", "Qwen 3.8 Flash", 1_000_000, 131_072],
-    ["google/gemini-3.7-flash", "Gemini 3.7 Flash", 1_048_576, 65_536],
-    ["xai/grok-4.6", "Grok 4.6", 500_000, 500_000],
+    ["Qwen/Qwen3.8-Flash", "Qwen 3.8 Flash", 1_000_000, 32_768],
+    ["google/gemini-3.7-flash", "Gemini 3.7 Flash", 1_048_576, 32_768],
+    ["xai/grok-4.6", "Grok 4.6", 500_000, 32_768],
   ])(
     "uses Pi metadata for current live vision models: %s",
     (id, name, contextWindow, maxTokens) => {
@@ -499,11 +567,11 @@ describe("Command Code catalog conversion", () => {
     ).toMatchObject({
       reasoning: true,
       input: ["text", "image"],
-      maxTokens: 64_000,
+      maxTokens: 32_768,
     });
   });
 
-  it("creates a provider with both API families", () => {
+  it("creates a provider with all API families", () => {
     const provider = createCommandCodeProvider();
 
     expect(provider).toMatchObject({
@@ -511,9 +579,9 @@ describe("Command Code catalog conversion", () => {
       name: "Command Code",
       baseUrl: "https://api.commandcode.ai/provider/v1",
     });
-    expect(provider.getModels()).toHaveLength(82);
+    expect(provider.getModels()).toHaveLength(86);
     expect(new Set(provider.getModels().map((model) => model.api))).toEqual(
-      new Set(["anthropic-messages", "openai-completions"]),
+      new Set(["anthropic-messages", "openai-completions", "openai-responses"]),
     );
     expect(provider.refreshModels).toBeTypeOf("function");
     expect(provider.auth.apiKey?.name).toBe("Command Code API key");
@@ -560,6 +628,11 @@ describe("Command Code catalog conversion", () => {
     expect(new URL(anthropic.url).pathname).toBe("/provider/v1/messages");
     expect(anthropic.headers.get("x-api-key")).toBe("test-key");
     expect(anthropic.headers.get("x-cmd-zdr")).toBe("1");
+
+    const responses = await captureRequest("gpt-6.1-sol");
+    expect(responses.url).toBe("https://api.commandcode.ai/provider/v1/responses");
+    expect(responses.headers.get("authorization")).toBe("Bearer test-key");
+    expect(responses.headers.get("x-cmd-zdr")).toBe("1");
   });
 });
 
@@ -592,6 +665,7 @@ describe("Command Code live catalog", () => {
       name: "New Model",
       provider: "command-code",
       contextWindow: 32_000,
+      maxTokens: 24_000,
       api: "openai-completions",
     });
     expect(stored?.models).toEqual(
@@ -648,10 +722,10 @@ describe("Command Code live catalog", () => {
         object: "list",
         data: [
           {
-            id: "responses-only",
-            name: "Responses Only",
+            id: "unknown-endpoint",
+            name: "Unknown Endpoint",
             context_length: 1000,
-            supported_endpoints: ["/responses"],
+            supported_endpoints: ["/future"],
           },
         ],
       },
@@ -691,6 +765,66 @@ describe("Command Code live catalog", () => {
       {
         object: "list",
         data: [{ id: "id", name: "Name", context_length: 1.5, supported_endpoints: ["/messages"] }],
+      },
+    ],
+    [
+      "zero max output",
+      {
+        object: "list",
+        data: [
+          {
+            id: "id",
+            name: "Name",
+            context_length: 1000,
+            max_output_tokens: 0,
+            supported_endpoints: ["/messages"],
+          },
+        ],
+      },
+    ],
+    [
+      "negative max output",
+      {
+        object: "list",
+        data: [
+          {
+            id: "id",
+            name: "Name",
+            context_length: 1000,
+            max_output_tokens: -1,
+            supported_endpoints: ["/messages"],
+          },
+        ],
+      },
+    ],
+    [
+      "fractional max output",
+      {
+        object: "list",
+        data: [
+          {
+            id: "id",
+            name: "Name",
+            context_length: 1000,
+            max_output_tokens: 1.5,
+            supported_endpoints: ["/messages"],
+          },
+        ],
+      },
+    ],
+    [
+      "string max output",
+      {
+        object: "list",
+        data: [
+          {
+            id: "id",
+            name: "Name",
+            context_length: 1000,
+            max_output_tokens: "32768",
+            supported_endpoints: ["/messages"],
+          },
+        ],
       },
     ],
     [
@@ -743,7 +877,9 @@ describe("Command Code live catalog", () => {
     await models.refresh({ providers: ["command-code"], force: true });
 
     expect(models.getModel("command-code", "chat-model")).toBeDefined();
-    expect(models.getModel("command-code", "responses-only")).toBeUndefined();
+    expect(models.getModel("command-code", "responses-only")).toMatchObject({
+      api: "openai-responses",
+    });
     expect(models.getModel("command-code", "unknown-endpoint")).toBeUndefined();
   });
 
@@ -756,7 +892,7 @@ describe("Command Code live catalog", () => {
             id: "claude-sonnet-5",
             name: "Claude Sonnet 5",
             context_length: 1_000_000,
-            supported_endpoints: ["/responses"],
+            supported_endpoints: ["/future"],
           },
           {
             id: "new-model",
@@ -799,6 +935,37 @@ describe("Command Code live catalog", () => {
     expect(models.getModel("command-code", "claude-sonnet-5")).toBeUndefined();
   });
 
+  it("migrates legacy output limits without capping versioned explicit limits", async () => {
+    const modelsStore = new InMemoryModelsStore();
+    const legacyModel = {
+      ...cachedLiveOnlyModel(),
+      id: "deepseek/deepseek-v4.1-flash",
+      name: "DeepSeek V4.1 Flash",
+      contextWindow: 1_000_000,
+      maxTokens: 943_718,
+    } satisfies Model<"openai-completions">;
+    await modelsStore.write("command-code", { models: [legacyModel], checkedAt: Date.now() });
+
+    const legacy = await createRefreshModels(modelsStore);
+    await legacy.models.refresh({ providers: ["command-code"], allowNetwork: false });
+
+    expect(legacy.models.getModel("command-code", legacyModel.id)?.maxTokens).toBe(32_768);
+    expect((await modelsStore.read("command-code"))?.models[0]?.maxTokens).toBe(32_768);
+
+    const versionedModel = { ...legacyModel, maxTokens: 393_216 };
+    const versionedEntry = {
+      models: [versionedModel],
+      checkedAt: Date.now(),
+      commandCodeCatalogVersion: 1,
+    };
+    await modelsStore.write("command-code", versionedEntry);
+
+    const versioned = await createRefreshModels(modelsStore);
+    await versioned.models.refresh({ providers: ["command-code"], allowNetwork: false });
+
+    expect(versioned.models.getModel("command-code", versionedModel.id)?.maxTokens).toBe(393_216);
+  });
+
   it("skips a fresh non-forced online refresh without rewriting checkedAt", async () => {
     const checkedAt = Date.now();
     const fetch = vi.spyOn(globalThis, "fetch");
@@ -808,7 +975,11 @@ describe("Command Code live catalog", () => {
 
     expect(fetch).not.toHaveBeenCalled();
     expect(models.getModel("command-code", cached.id)).toEqual(cached);
-    expect(await modelsStore.read("command-code")).toEqual({ models: [cached], checkedAt });
+    expect(await modelsStore.read("command-code")).toEqual({
+      models: [cached],
+      checkedAt,
+      commandCodeCatalogVersion: 1,
+    });
   });
 
   it("fetches and stores a stale non-forced catalog", async () => {
@@ -852,14 +1023,14 @@ describe("Command Code live catalog", () => {
     const failed = await first.models.refresh({ providers: ["command-code"] });
 
     expect(failed.errors.get("command-code")).toBeInstanceOf(Error);
-    expect(first.models.getModels("command-code")).toHaveLength(82);
+    expect(first.models.getModels("command-code")).toHaveLength(86);
     expect(await modelsStore.read("command-code")).toMatchObject({ models: [] });
 
     const restarted = await createRefreshModels(modelsStore);
     await restarted.models.refresh({ providers: ["command-code"] });
 
     expect(fetch).toHaveBeenCalledOnce();
-    expect(restarted.models.getModels("command-code")).toHaveLength(82);
+    expect(restarted.models.getModels("command-code")).toHaveLength(86);
   });
 
   it("fetches and stores a fresh catalog when forced", async () => {
