@@ -53,13 +53,18 @@ Ask Pi normally; there is no provider-specific prompt syntax. Image input works 
 
 `typesafe_decide` is a tool, not a selectable chat model, so it never appears in the model picker and never accepts a chat prompt. Pi calls it like any other tool — see [TypeSafe Decisions](#typesafe-decisions).
 
+## What's New In 0.4.0
+
+- **`typesafe_decide` tool** (new) — answers typed Noul, Choice, and Score questions against a JSON `state` with TypeSafe Jev and returns structured probabilities, not generated text. Calls TypeSafe System One directly when a `TYPESAFE_API_KEY` or host-resolved `typesafe` credential is present; otherwise makes a single fallback request to `typesafe/jev` through `command-code`. Direct `400` / `422` responses and cancellation are terminal and never fall back. System One requests never inherit `CMD_ZDR`, because `typesafe/jev` has no ZDR-capable Command Code upstream — the tool provides no enforced-ZDR mode.
+- **Command Code catalog refreshed to 82 models** — snapshot captured 2026-09-27 (was 62). Routing is declared per record: `/messages` takes precedence, `/chat/completions` is used otherwise, and records advertising only `/responses` are filtered out because this package does not implement Responses API transport. Pricing estimates were also refreshed against the 2026-09-27 rates. See [`CHANGELOG.md`](CHANGELOG.md) for the full release notes.
+
 ## What's New In 0.3.1
 
 - **`command-code` import consolidation** — `command-code.ts` now imports `anthropicMessagesApi`, `openAICompletionsApi`, `createProvider`, `Provider`, and `RefreshModelsContext` from a single `@earendil-works/pi-ai/compat` entry point. No behavior change.
 
 ## What's New In 0.3.0
 
-- **`command-code` provider** (new) — bundled with 82 snapshot models captured on 2026-09-27, `CMD_API_KEY` authentication, optional `CMD_ZDR=1` zero-data-retention requests, and endpoint-declared routing (Anthropic Messages when the record declares `/messages`, otherwise OpenAI Chat Completions).
+- **`command-code` provider** (new) — `CMD_API_KEY` authentication, optional `CMD_ZDR=1` zero-data-retention requests, and endpoint-declared routing (Anthropic Messages when the record declares `/messages`, otherwise OpenAI Chat Completions).
 - **Live catalog overlay** — Command Code fetches its model list from `https://api.commandcode.ai/provider/v1/models`, refreshes at most every four hours, and persists the last successful overlay for offline restore. On first run, or after a refresh failure, the bundled snapshot stays visible until a refresh succeeds.
 - **Toolchain updates** — TypeScript 7, Biome 2.5.11 schema. No code changes were required for the TypeScript bump. See [`CHANGELOG.md`](CHANGELOG.md) for the full release notes.
 
@@ -73,7 +78,7 @@ Ask Pi normally; there is no provider-specific prompt syntax. Image input works 
 | `stepfun-ai`                           | `step-3.7-flash`           | text, image | low / medium / high       | 256,000   | 256,000    | $0.20 / $1.15                | $0.04      |
 | `stepfun-ai`                           | `step-3.5-flash-2603`      | text        | low / high                | 256,000   | 256,000    | $0.10 / $0.30                | $0.02      |
 | `stepfun-ai`                           | `step-3.5-flash`           | text        | automatic (shown as high) | 256,000   | 256,000    | $0.10 / $0.30                | $0.02      |
-| `command-code`                         | 82 bundled snapshot models | varies      | varies                    | varies    | varies     | dated snapshot               | varies     |
+| `command-code`                         | 82 bundled snapshot models (captured 2026-09-27) | varies      | varies                    | varies    | varies     | dated snapshot               | varies     |
 
 API bases:
 
