@@ -15,11 +15,13 @@ export interface CommandCodeCatalogRecord {
   name: string;
   contextWindow: number;
   supportedEndpoints: readonly string[];
+  maxOutputTokens?: number;
 }
 
 type CommandCodeModel = Model<"anthropic-messages"> | Model<"openai-completions">;
 
 const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+const COMMAND_CODE_FALLBACK_MAX_TOKENS = 32_768;
 
 const OPENAI_COMPAT: OpenAICompletionsCompat = {
   supportsStore: false,
@@ -97,7 +99,10 @@ export function modelFromCatalogRecord(record: CommandCodeCatalogRecord): Comman
     input: donor ? [...donor.input] : (["text"] as ("text" | "image")[]),
     cost: COMMAND_COSTS[record.id as CommandCodeCatalogId] ?? ZERO_COST,
     contextWindow: record.contextWindow,
-    maxTokens: Math.min(donor?.maxTokens ?? 16_384, record.contextWindow),
+    maxTokens: Math.min(
+      record.maxOutputTokens ?? COMMAND_CODE_FALLBACK_MAX_TOKENS,
+      record.contextWindow,
+    ),
   };
 
   if (usesMessages) {
@@ -118,6 +123,7 @@ export function modelFromCatalogRecord(record: CommandCodeCatalogRecord): Comman
 }
 
 const COMMAND_CODE_CATALOG_SNAPSHOT = [
+  { id: "claude-sonnet-5-5", name: "Claude Sonnet 5.5", contextWindow: 1_000_000 },
   { id: "claude-sonnet-5", name: "Claude Sonnet 5", contextWindow: 1_000_000 },
   { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", contextWindow: 1_000_000 },
   { id: "claude-fable-5-1", name: "Claude Fable 5.1", contextWindow: 1_000_000 },
@@ -128,6 +134,7 @@ const COMMAND_CODE_CATALOG_SNAPSHOT = [
   { id: "claude-opus-4-7", name: "Claude Opus 4.7", contextWindow: 1_000_000 },
   { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5", contextWindow: 200_000 },
   { id: "gpt-6-astra", name: "GPT-6 Astra", contextWindow: 1_050_000 },
+  { id: "gpt-6.1-sol", name: "GPT-6.1 Sol", contextWindow: 1_050_000 },
   { id: "gpt-6-sol", name: "GPT-6 Sol", contextWindow: 1_050_000 },
   { id: "gpt-6-luna", name: "GPT-6 Luna", contextWindow: 1_050_000 },
   { id: "gpt-5.6-sol", name: "GPT-5.6 Sol", contextWindow: 1_050_000 },
@@ -156,6 +163,11 @@ const COMMAND_CODE_CATALOG_SNAPSHOT = [
   {
     id: "deepseek/deepseek-v4.1-flash",
     name: "DeepSeek V4.1 Flash",
+    contextWindow: 1_000_000,
+  },
+  {
+    id: "deepseek/deepseek-v4.1-flash-fast",
+    name: "DeepSeek V4.1 Flash Fast",
     contextWindow: 1_000_000,
   },
   { id: "moonshotai/Kimi-K3", name: "Kimi K3", contextWindow: 1_000_000 },
@@ -220,6 +232,7 @@ const COMMAND_CODE_CATALOG_SNAPSHOT = [
     name: "Ling 3.0 Flash Sante",
     contextWindow: 262_144,
   },
+  { id: "inclusionai/ling-3.1-flash:free", name: "Ling 3.1 Flash", contextWindow: 262_144 },
   { id: "meta/muse-spark-1.1", name: "Muse Spark 1.1", contextWindow: 1_048_576 },
   { id: "meta/muse-spark-1.2", name: "Muse Spark 1.2", contextWindow: 1_048_576 },
   {
@@ -239,6 +252,7 @@ const COMMAND_CODE_CATALOG_SNAPSHOT = [
 ] as const;
 
 const MESSAGES_MODEL_IDS = new Set([
+  "claude-sonnet-5-5",
   "claude-sonnet-5",
   "claude-sonnet-4-6",
   "claude-fable-5-1",
@@ -273,8 +287,9 @@ export const COMMAND_CODE_CATALOG: readonly CommandCodeCatalogRecord[] =
 type CommandCodeCatalogId = (typeof COMMAND_CODE_CATALOG_SNAPSHOT)[number]["id"];
 
 // Snapshot source: https://commandcode.ai/docs/resources/pricing-limits
-// Effective rates captured 2026-09-27, USD per 1M tokens.
+// Effective rates captured 2026-09-30, USD per 1M tokens.
 const COMMAND_COSTS: Readonly<Partial<Record<CommandCodeCatalogId, ModelCost>>> = {
+  "claude-sonnet-5-5": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
   "claude-sonnet-5": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
   "claude-sonnet-4-6": { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
   "claude-fable-5-1": { input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5 },
@@ -290,6 +305,13 @@ const COMMAND_COSTS: Readonly<Partial<Record<CommandCodeCatalogId, ModelCost>>> 
     cacheRead: 1,
     cacheWrite: 12.5,
     tiers: [{ inputTokensAbove: 272_000, input: 20, output: 75, cacheRead: 2, cacheWrite: 25 }],
+  },
+  "gpt-6.1-sol": {
+    input: 2,
+    output: 10,
+    cacheRead: 0.1,
+    cacheWrite: 2.5,
+    tiers: [{ inputTokensAbove: 272_000, input: 4, output: 15, cacheRead: 0.2, cacheWrite: 5 }],
   },
   "gpt-6-sol": {
     input: 2,
@@ -347,6 +369,12 @@ const COMMAND_COSTS: Readonly<Partial<Record<CommandCodeCatalogId, ModelCost>>> 
   },
   "deepseek/deepseek-v4-flash-fast": { input: 0.28, output: 0.56, cacheRead: 0.07, cacheWrite: 0 },
   "deepseek/deepseek-v4.1-flash": { input: 0.15, output: 0.6, cacheRead: 0.003, cacheWrite: 0 },
+  "deepseek/deepseek-v4.1-flash-fast": {
+    input: 0.16,
+    output: 0.58,
+    cacheRead: 0.016,
+    cacheWrite: 0,
+  },
   "moonshotai/Kimi-K3": { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 0 },
   "moonshotai/Kimi-K2.7-Code": { input: 0.95, output: 4, cacheRead: 0.19, cacheWrite: 0 },
   "moonshotai/Kimi-K2.7-Code-Highspeed": { input: 1.9, output: 8, cacheRead: 0.38, cacheWrite: 0 },
@@ -418,6 +446,7 @@ const COMMAND_COSTS: Readonly<Partial<Record<CommandCodeCatalogId, ModelCost>>> 
   "stealth/space-bunny-alpha": ZERO_COST,
   "stealth/pixel-canary": ZERO_COST,
   "inclusionai/ling-3.0-flash-sante:free": ZERO_COST,
+  "inclusionai/ling-3.1-flash:free": ZERO_COST,
   "meta/muse-spark-1.1": { input: 1.25, output: 4.25, cacheRead: 0.15, cacheWrite: 0 },
   "meta/muse-spark-1.2": { input: 1.25, output: 4.25, cacheRead: 0.15, cacheWrite: 0 },
   "meta/muse-spark-1.2-contributor": { input: 0.1, output: 0.2, cacheRead: 0.002, cacheWrite: 0 },

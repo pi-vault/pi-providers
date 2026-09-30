@@ -31,7 +31,10 @@ function parseCommandCodeModels(value: unknown) {
   const records: CommandCodeCatalogRecord[] = payload.data.map((entry) => {
     if (!entry || typeof entry !== "object") throw new Error("Invalid Command Code model catalog");
 
-    const { id, name, context_length, supported_endpoints } = entry as Record<string, unknown>;
+    const { id, name, context_length, max_output_tokens, supported_endpoints } = entry as Record<
+      string,
+      unknown
+    >;
     if (
       typeof id !== "string" ||
       !id.trim() ||
@@ -40,13 +43,23 @@ function parseCommandCodeModels(value: unknown) {
       typeof context_length !== "number" ||
       !Number.isInteger(context_length) ||
       context_length <= 0 ||
+      (max_output_tokens !== undefined &&
+        (typeof max_output_tokens !== "number" ||
+          !Number.isInteger(max_output_tokens) ||
+          max_output_tokens <= 0)) ||
       !Array.isArray(supported_endpoints) ||
       !supported_endpoints.every((endpoint) => typeof endpoint === "string")
     ) {
       throw new Error("Invalid Command Code model catalog");
     }
 
-    return { id, name, contextWindow: context_length, supportedEndpoints: supported_endpoints };
+    return {
+      id,
+      name,
+      contextWindow: context_length,
+      supportedEndpoints: supported_endpoints,
+      ...(max_output_tokens === undefined ? {} : { maxOutputTokens: max_output_tokens }),
+    };
   });
 
   if (new Set(records.map((record) => record.id)).size !== records.length) {
