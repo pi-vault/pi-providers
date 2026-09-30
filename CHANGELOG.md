@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+
+- Command Code support for the `COMMAND_CODE_API_KEY` alias and catalog-only `CMD_MODELS_URL` override, with `CMD_API_KEY` retaining precedence.
+- Live `pricing`, `modalities`, and `reasoning` metadata with strict catalog validation and cache retention for malformed refreshes.
+- Official family and adaptive-thinking fallbacks while retaining the bundled snapshot and offline cache.
+
+### Changed
+
+- Command Code now ships an 86-model snapshot with refreshed 2026-09-30 prices, a 32,768 output fallback capped by context, and legacy cache migration.
+- OpenAI Responses routing is supported alongside Anthropic Messages and OpenAI Chat Completions.
+
 ## 2026-09-29 - [0.4.0]
 
 ### Added
