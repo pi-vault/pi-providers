@@ -636,17 +636,38 @@ describe("Command Code catalog conversion", () => {
     expect(provider.auth.apiKey?.name).toBe("Command Code API key");
   });
 
-  it("resolves CMD_API_KEY authentication", async () => {
+  async function resolveApiKey(env: Record<string, string | undefined>) {
     const apiKey = createCommandCodeProvider().auth.apiKey;
-    const auth = await apiKey?.resolve({
+    return apiKey?.resolve({
       ctx: {
-        env: async (name) => (name === "CMD_API_KEY" ? "test-key" : undefined),
+        env: async (name) => env[name],
         fileExists: async () => false,
       },
       signal: new AbortController().signal,
     });
+  }
 
-    expect(auth).toEqual({ auth: { apiKey: "test-key" }, source: "CMD_API_KEY" });
+  it("resolves CMD_API_KEY authentication", async () => {
+    await expect(resolveApiKey({ CMD_API_KEY: "primary" })).resolves.toMatchObject({
+      auth: { apiKey: "primary" },
+      source: "CMD_API_KEY",
+    });
+  });
+
+  it("resolves COMMAND_CODE_API_KEY authentication", async () => {
+    await expect(resolveApiKey({ COMMAND_CODE_API_KEY: "alias" })).resolves.toMatchObject({
+      auth: { apiKey: "alias" },
+      source: "COMMAND_CODE_API_KEY",
+    });
+  });
+
+  it("prefers CMD_API_KEY over COMMAND_CODE_API_KEY", async () => {
+    await expect(
+      resolveApiKey({ CMD_API_KEY: "primary", COMMAND_CODE_API_KEY: "alias" }),
+    ).resolves.toMatchObject({
+      auth: { apiKey: "primary" },
+      source: "CMD_API_KEY",
+    });
   });
 
   it("adds model ZDR headers only when CMD_ZDR is 1", () => {
@@ -700,6 +721,97 @@ describe("Command Code registration", () => {
 });
 
 describe("Command Code live catalog", () => {
+  it("fetches the default Command Code models URL", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(validPayload));
+    const { models } = await createRefreshModels();
+
+    await models.refresh({ providers: ["command-code"], force: true });
+
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(fetch.mock.calls[0]?.[0]).toBe("https://api.commandcode.ai/provider/v1/models");
+  });
+
+  it("uses the default models URL for a blank CMD_MODELS_URL", async () => {
+    vi.stubEnv("CMD_MODELS_URL", "  ");
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(validPayload));
+    const { models } = await createRefreshModels();
+
+    await models.refresh({ providers: ["command-code"], force: true });
+
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(fetch.mock.calls[0]?.[0]).toBe("https://api.commandcode.ai/provider/v1/models");
+  });
+
+  it("fetches a configured CMD_MODELS_URL despite a fresh cache from another source", async () => {
+    const configuredUrl = "https://catalog.example.test/models";
+    vi.stubEnv("CMD_MODELS_URL", configuredUrl);
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(validPayload));
+    const modelsStore = new InMemoryModelsStore();
+    await modelsStore.write("command-code", {
+      models: [cachedLiveOnlyModel()],
+      checkedAt: Date.now(),
+      commandCodeCatalogVersion: 1,
+      commandCodeModelsUrl: "https://api.commandcode.ai/provider/v1/models",
+    });
+    const { models } = await createRefreshModels(modelsStore);
+
+    await models.refresh({ providers: ["command-code"] });
+
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(fetch.mock.calls[0]?.[0]).toBe(configuredUrl);
+    expect((await modelsStore.read("command-code"))?.commandCodeModelsUrl).toBe(configuredUrl);
+  });
+
+  it("throttles a fresh cache from the configured source", async () => {
+    const configuredUrl = "https://catalog.example.test/models";
+    vi.stubEnv("CMD_MODELS_URL", configuredUrl);
+    const fetch = vi.spyOn(globalThis, "fetch");
+    const modelsStore = new InMemoryModelsStore();
+    await modelsStore.write("command-code", {
+      models: [cachedLiveOnlyModel()],
+      checkedAt: Date.now(),
+      commandCodeCatalogVersion: 1,
+      commandCodeModelsUrl: configuredUrl,
+    });
+    const { models } = await createRefreshModels(modelsStore);
+
+    await models.refresh({ providers: ["command-code"] });
+
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("retries a configured source after its previous refresh failed", async () => {
+    const configuredUrl = "https://catalog.example.test/models";
+    const defaultUrl = "https://api.commandcode.ai/provider/v1/models";
+    vi.stubEnv("CMD_MODELS_URL", configuredUrl);
+    const fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response("down", { status: 503 }))
+      .mockResolvedValueOnce(jsonResponse(validPayload));
+    const modelsStore = new InMemoryModelsStore();
+    const cached = cachedLiveOnlyModel();
+    await modelsStore.write("command-code", {
+      models: [cached],
+      checkedAt: Date.now(),
+      commandCodeCatalogVersion: 1,
+      commandCodeModelsUrl: defaultUrl,
+    });
+    const { models } = await createRefreshModels(modelsStore);
+
+    const first = await models.refresh({ providers: ["command-code"] });
+    const failed = await modelsStore.read("command-code");
+    const second = await models.refresh({ providers: ["command-code"] });
+
+    expect(first.errors.get("command-code")).toBeInstanceOf(Error);
+    expect(failed?.models).toEqual([cached]);
+    expect(failed?.commandCodeModelsUrl).toBe(defaultUrl);
+    expect(second.errors.size).toBe(0);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch.mock.calls[0]?.[0]).toBe(configuredUrl);
+    expect(fetch.mock.calls[1]?.[0]).toBe(configuredUrl);
+    expect((await modelsStore.read("command-code"))?.commandCodeModelsUrl).toBe(configuredUrl);
+  });
+
   it("converts and persists a valid forced refresh", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(validPayload));
     const { models, modelsStore } = await createRefreshModels();
@@ -1174,6 +1286,7 @@ describe("Command Code live catalog", () => {
       models: [cached],
       checkedAt,
       commandCodeCatalogVersion: 1,
+      commandCodeModelsUrl: "https://api.commandcode.ai/provider/v1/models",
     });
   });
 

@@ -18,6 +18,7 @@ import {
 
 const CATALOG_REFRESH_INTERVAL_MS = 4 * 60 * 60 * 1000;
 const COMMAND_CODE_CATALOG_VERSION = 1;
+const DEFAULT_COMMAND_CODE_MODELS_URL = `${COMMAND_CODE_BASE_URL}/models`;
 
 function isObjectRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -25,10 +26,16 @@ function isObjectRecord(value: unknown): value is Record<string, unknown> {
 
 type CommandCodeStoredCatalog = NonNullable<RefreshModelsContext["stored"]> & {
   commandCodeCatalogVersion?: number;
+  commandCodeModelsUrl?: string;
 };
 
 function versionedCatalogEntry(entry: NonNullable<RefreshModelsContext["stored"]>) {
-  return { ...entry, commandCodeCatalogVersion: COMMAND_CODE_CATALOG_VERSION };
+  const stored = entry as CommandCodeStoredCatalog;
+  return {
+    ...stored,
+    commandCodeCatalogVersion: COMMAND_CODE_CATALOG_VERSION,
+    commandCodeModelsUrl: stored.commandCodeModelsUrl ?? DEFAULT_COMMAND_CODE_MODELS_URL,
+  };
 }
 
 function migrateStoredCatalog(stored: RefreshModelsContext["stored"]) {
@@ -161,9 +168,9 @@ function parseCommandCodeModels(value: unknown) {
   return chatRecords.map(modelFromCatalogRecord);
 }
 
-async function fetchCommandCodeModels(context: RefreshModelsContext) {
+async function fetchCommandCodeModels(modelsUrl: string, context: RefreshModelsContext) {
   const signal = AbortSignal.any([context.signal, AbortSignal.timeout(10_000)]);
-  const response = await fetch(`${COMMAND_CODE_BASE_URL}/models`, { signal });
+  const response = await fetch(modelsUrl, { signal });
   if (!response.ok) {
     throw new Error(`Command Code model catalog request failed: ${response.status}`);
   }
@@ -175,15 +182,19 @@ export function createCommandCodeProvider(): Provider<
   "anthropic-messages" | "openai-completions" | "openai-responses"
 > {
   const headers = process.env.CMD_ZDR === "1" ? { "x-cmd-zdr": "1" } : undefined;
+  const commandCodeModelsUrl =
+    process.env.CMD_MODELS_URL?.trim() || DEFAULT_COMMAND_CODE_MODELS_URL;
   let authoritativeModelIds: ReadonlySet<string> | undefined;
 
   const provider = createProvider({
     id: "command-code",
     name: "Command Code",
     baseUrl: COMMAND_CODE_BASE_URL,
-    auth: { apiKey: envApiKeyAuth("Command Code API key", ["CMD_API_KEY"]) },
+    auth: {
+      apiKey: envApiKeyAuth("Command Code API key", ["CMD_API_KEY", "COMMAND_CODE_API_KEY"]),
+    },
     models: commandCodeModels,
-    fetchModels: fetchCommandCodeModels,
+    fetchModels: (context) => fetchCommandCodeModels(commandCodeModelsUrl, context),
     api: {
       "anthropic-messages": anthropicMessagesApi(),
       "openai-completions": openAICompletionsApi(),
@@ -211,6 +222,7 @@ export function createCommandCodeProvider(): Provider<
       context.allowNetwork &&
       !context.force &&
       stored?.checkedAt !== undefined &&
+      (stored.commandCodeModelsUrl ?? DEFAULT_COMMAND_CODE_MODELS_URL) === commandCodeModelsUrl &&
       Date.now() - stored.checkedAt < CATALOG_REFRESH_INTERVAL_MS
     ) {
       return;
@@ -223,9 +235,12 @@ export function createCommandCodeProvider(): Provider<
           context.publish({
             ...publication,
             persist:
-              publication.persist === null || publication.persist === undefined
-                ? publication.persist
-                : versionedCatalogEntry(publication.persist),
+                publication.persist === null || publication.persist === undefined
+                  ? publication.persist
+                  : versionedCatalogEntry({
+                      ...publication.persist,
+                      commandCodeModelsUrl,
+                    }),
             update: publication.update
               ? () => {
                   publication.update?.();
