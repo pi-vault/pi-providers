@@ -29,8 +29,8 @@ type CommandCodeStoredCatalog = NonNullable<RefreshModelsContext["stored"]> & {
   commandCodeModelsUrl?: string;
 };
 
-function versionedCatalogEntry(entry: NonNullable<RefreshModelsContext["stored"]>) {
-  const stored = entry as CommandCodeStoredCatalog;
+function versionedCatalogEntry(entry: CommandCodeStoredCatalog) {
+  const stored = entry;
   return {
     ...stored,
     commandCodeCatalogVersion: COMMAND_CODE_CATALOG_VERSION,
@@ -110,7 +110,9 @@ function parseCommandCodeModels(value: unknown) {
       const prices = [input, output, cache_read, cache_write];
       if (
         prices.some(
-          (price) => price !== undefined && (typeof price !== "number" || !Number.isFinite(price) || price < 0),
+          (price) =>
+            price !== undefined &&
+            (typeof price !== "number" || !Number.isFinite(price) || price < 0),
         )
       ) {
         throw new Error("Invalid Command Code model catalog");
@@ -128,7 +130,10 @@ function parseCommandCodeModels(value: unknown) {
       if (!isObjectRecord(modalities)) throw new Error("Invalid Command Code model catalog");
       const modalityInput = modalities.input;
       if (modalityInput !== undefined) {
-        if (!Array.isArray(modalityInput) || !modalityInput.every((value) => typeof value === "string")) {
+        if (
+          !Array.isArray(modalityInput) ||
+          !modalityInput.every((value) => typeof value === "string")
+        ) {
           throw new Error("Invalid Command Code model catalog");
         }
         input = modalityInput.includes("image") ? ["text", "image"] : ["text"];
@@ -215,6 +220,7 @@ export function createCommandCodeProvider(): Provider<
   provider.refreshModels = async (context) => {
     const migration = migrateStoredCatalog(context.stored);
     const stored = migration.stored;
+    const storedCatalog = stored as CommandCodeStoredCatalog | undefined;
     if (migration.migrated) {
       if (!(await context.publish({ persist: stored }))) return;
     }
@@ -222,7 +228,8 @@ export function createCommandCodeProvider(): Provider<
       context.allowNetwork &&
       !context.force &&
       stored?.checkedAt !== undefined &&
-      (stored.commandCodeModelsUrl ?? DEFAULT_COMMAND_CODE_MODELS_URL) === commandCodeModelsUrl &&
+      (storedCatalog?.commandCodeModelsUrl ?? DEFAULT_COMMAND_CODE_MODELS_URL) ===
+        commandCodeModelsUrl &&
       Date.now() - stored.checkedAt < CATALOG_REFRESH_INTERVAL_MS
     ) {
       return;
@@ -235,12 +242,12 @@ export function createCommandCodeProvider(): Provider<
           context.publish({
             ...publication,
             persist:
-                publication.persist === null || publication.persist === undefined
-                  ? publication.persist
-                  : versionedCatalogEntry({
-                      ...publication.persist,
-                      commandCodeModelsUrl,
-                    }),
+              publication.persist === null || publication.persist === undefined
+                ? publication.persist
+                : versionedCatalogEntry({
+                    ...publication.persist,
+                    commandCodeModelsUrl,
+                  }),
             update: publication.update
               ? () => {
                   publication.update?.();

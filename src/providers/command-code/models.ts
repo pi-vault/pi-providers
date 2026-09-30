@@ -103,19 +103,20 @@ export function modelFromCatalogRecord(record: CommandCodeCatalogRecord): Comman
   if (!usesMessages && !usesCompletions && !usesResponses) {
     throw new Error(`Unsupported Command Code model endpoints: ${record.id}`);
   }
+  const input: ("text" | "image")[] = record.input
+    ? [...record.input]
+    : donor
+      ? [...donor.input]
+      : OFFICIAL_VISION_FAMILY.test(record.id)
+        ? ["text", "image"]
+        : ["text"];
   const model = {
     id: record.id,
     name: record.name,
     provider: "command-code",
     baseUrl: usesMessages ? COMMAND_CODE_ANTHROPIC_BASE_URL : COMMAND_CODE_BASE_URL,
     reasoning: record.reasoning ?? donor?.reasoning ?? true,
-    input: record.input
-      ? [...record.input]
-      : donor
-        ? [...donor.input]
-        : OFFICIAL_VISION_FAMILY.test(record.id)
-          ? ["text", "image"]
-          : ["text"],
+    input,
     cost: record.cost ?? COMMAND_COSTS[record.id as CommandCodeCatalogId] ?? ZERO_COST,
     contextWindow: record.contextWindow,
     maxTokens: Math.min(

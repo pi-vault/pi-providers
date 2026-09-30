@@ -2,6 +2,7 @@ import {
   createModels,
   InMemoryCredentialStore,
   InMemoryModelsStore,
+  type Api,
   type Model,
   normalizeContext,
 } from "@earendil-works/pi-ai";
@@ -46,6 +47,20 @@ function cachedLiveOnlyModel(): Model<"openai-completions"> {
     contextWindow: 32_000,
     maxTokens: 32_000,
   };
+}
+
+type CommandCodeTestStoredCatalog = {
+  models: Model<Api>[];
+  checkedAt?: number;
+  commandCodeCatalogVersion?: number;
+  commandCodeModelsUrl?: string;
+};
+
+async function writeCommandCodeCatalog(
+  modelsStore: InMemoryModelsStore,
+  entry: CommandCodeTestStoredCatalog,
+) {
+  await modelsStore.write("command-code", entry);
 }
 
 async function createRefreshModels(modelsStore = new InMemoryModelsStore()) {
@@ -527,7 +542,7 @@ describe("Command Code catalog conversion", () => {
       cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
       thinkingLevelMap: { xhigh: "xhigh", max: "max" },
       compat: { forceAdaptiveThinking: true },
-      });
+    });
   });
 
   it("prefers Command Code metadata over donor and bundled metadata", () => {
@@ -747,7 +762,7 @@ describe("Command Code live catalog", () => {
     vi.stubEnv("CMD_MODELS_URL", configuredUrl);
     const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(validPayload));
     const modelsStore = new InMemoryModelsStore();
-    await modelsStore.write("command-code", {
+    await writeCommandCodeCatalog(modelsStore, {
       models: [cachedLiveOnlyModel()],
       checkedAt: Date.now(),
       commandCodeCatalogVersion: 1,
@@ -759,7 +774,9 @@ describe("Command Code live catalog", () => {
 
     expect(fetch).toHaveBeenCalledOnce();
     expect(fetch.mock.calls[0]?.[0]).toBe(configuredUrl);
-    expect((await modelsStore.read("command-code"))?.commandCodeModelsUrl).toBe(configuredUrl);
+    expect(
+      (await modelsStore.read("command-code")) as CommandCodeTestStoredCatalog | undefined,
+    ).toMatchObject({ commandCodeModelsUrl: configuredUrl });
   });
 
   it("throttles a fresh cache from the configured source", async () => {
@@ -767,7 +784,7 @@ describe("Command Code live catalog", () => {
     vi.stubEnv("CMD_MODELS_URL", configuredUrl);
     const fetch = vi.spyOn(globalThis, "fetch");
     const modelsStore = new InMemoryModelsStore();
-    await modelsStore.write("command-code", {
+    await writeCommandCodeCatalog(modelsStore, {
       models: [cachedLiveOnlyModel()],
       checkedAt: Date.now(),
       commandCodeCatalogVersion: 1,
@@ -790,7 +807,7 @@ describe("Command Code live catalog", () => {
       .mockResolvedValueOnce(jsonResponse(validPayload));
     const modelsStore = new InMemoryModelsStore();
     const cached = cachedLiveOnlyModel();
-    await modelsStore.write("command-code", {
+    await writeCommandCodeCatalog(modelsStore, {
       models: [cached],
       checkedAt: Date.now(),
       commandCodeCatalogVersion: 1,
@@ -799,7 +816,9 @@ describe("Command Code live catalog", () => {
     const { models } = await createRefreshModels(modelsStore);
 
     const first = await models.refresh({ providers: ["command-code"] });
-    const failed = await modelsStore.read("command-code");
+    const failed = (await modelsStore.read("command-code")) as
+      | CommandCodeTestStoredCatalog
+      | undefined;
     const second = await models.refresh({ providers: ["command-code"] });
 
     expect(first.errors.get("command-code")).toBeInstanceOf(Error);
@@ -809,7 +828,9 @@ describe("Command Code live catalog", () => {
     expect(fetch).toHaveBeenCalledTimes(2);
     expect(fetch.mock.calls[0]?.[0]).toBe(configuredUrl);
     expect(fetch.mock.calls[1]?.[0]).toBe(configuredUrl);
-    expect((await modelsStore.read("command-code"))?.commandCodeModelsUrl).toBe(configuredUrl);
+    expect(
+      (await modelsStore.read("command-code")) as CommandCodeTestStoredCatalog | undefined,
+    ).toMatchObject({ commandCodeModelsUrl: configuredUrl });
   });
 
   it("converts and persists a valid forced refresh", async () => {
@@ -862,9 +883,9 @@ describe("Command Code live catalog", () => {
       cost: { input: 0, output: 9, cacheRead: 0.25, cacheWrite: 0 },
     };
     expect(models.getModel("command-code", "metadata-model")).toMatchObject(expected);
-    expect(
-      (await modelsStore.read("command-code"))?.models,
-    ).toEqual(expect.arrayContaining([expect.objectContaining({ id: "metadata-model", ...expected })]));
+    expect((await modelsStore.read("command-code"))?.models).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "metadata-model", ...expected })]),
+    );
   });
 
   it("treats modalities without input as absent metadata", async () => {
