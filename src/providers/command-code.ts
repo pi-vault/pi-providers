@@ -18,13 +18,24 @@ import {
 
 const CATALOG_REFRESH_INTERVAL_MS = 4 * 60 * 60 * 1000;
 const COMMAND_CODE_CATALOG_VERSION = 1;
+const DEFAULT_COMMAND_CODE_MODELS_URL = `${COMMAND_CODE_BASE_URL}/models`;
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
 
 type CommandCodeStoredCatalog = NonNullable<RefreshModelsContext["stored"]> & {
   commandCodeCatalogVersion?: number;
+  commandCodeModelsUrl?: string;
 };
 
-function versionedCatalogEntry(entry: NonNullable<RefreshModelsContext["stored"]>) {
-  return { ...entry, commandCodeCatalogVersion: COMMAND_CODE_CATALOG_VERSION };
+function versionedCatalogEntry(entry: CommandCodeStoredCatalog) {
+  const stored = entry;
+  return {
+    ...stored,
+    commandCodeCatalogVersion: COMMAND_CODE_CATALOG_VERSION,
+    commandCodeModelsUrl: stored.commandCodeModelsUrl ?? DEFAULT_COMMAND_CODE_MODELS_URL,
+  };
 }
 
 function migrateStoredCatalog(stored: RefreshModelsContext["stored"]) {
@@ -64,10 +75,16 @@ function parseCommandCodeModels(value: unknown) {
   const records: CommandCodeCatalogRecord[] = payload.data.map((entry) => {
     if (!entry || typeof entry !== "object") throw new Error("Invalid Command Code model catalog");
 
-    const { id, name, context_length, max_output_tokens, supported_endpoints } = entry as Record<
-      string,
-      unknown
-    >;
+    const {
+      id,
+      name,
+      context_length,
+      max_output_tokens,
+      supported_endpoints,
+      pricing,
+      modalities,
+      reasoning,
+    } = entry as Record<string, unknown>;
     if (
       typeof id !== "string" ||
       !id.trim() ||
@@ -86,12 +103,56 @@ function parseCommandCodeModels(value: unknown) {
       throw new Error("Invalid Command Code model catalog");
     }
 
+    let cost: CommandCodeCatalogRecord["cost"];
+    if (pricing !== undefined) {
+      if (!isObjectRecord(pricing)) throw new Error("Invalid Command Code model catalog");
+      const { input, output, cache_read, cache_write } = pricing;
+      const prices = [input, output, cache_read, cache_write];
+      if (
+        prices.some(
+          (price) =>
+            price !== undefined &&
+            (typeof price !== "number" || !Number.isFinite(price) || price < 0),
+        )
+      ) {
+        throw new Error("Invalid Command Code model catalog");
+      }
+      cost = {
+        input: (input as number | undefined) ?? 0,
+        output: (output as number | undefined) ?? 0,
+        cacheRead: (cache_read as number | undefined) ?? 0,
+        cacheWrite: (cache_write as number | undefined) ?? 0,
+      };
+    }
+
+    let input: ("text" | "image")[] | undefined;
+    if (modalities !== undefined) {
+      if (!isObjectRecord(modalities)) throw new Error("Invalid Command Code model catalog");
+      const modalityInput = modalities.input;
+      if (modalityInput !== undefined) {
+        if (
+          !Array.isArray(modalityInput) ||
+          !modalityInput.every((value) => typeof value === "string")
+        ) {
+          throw new Error("Invalid Command Code model catalog");
+        }
+        input = modalityInput.includes("image") ? ["text", "image"] : ["text"];
+      }
+    }
+
+    if (reasoning !== undefined && typeof reasoning !== "boolean") {
+      throw new Error("Invalid Command Code model catalog");
+    }
+
     return {
       id,
       name,
       contextWindow: context_length,
       supportedEndpoints: supported_endpoints,
       ...(max_output_tokens === undefined ? {} : { maxOutputTokens: max_output_tokens }),
+      ...(cost === undefined ? {} : { cost }),
+      ...(input === undefined ? {} : { input }),
+      ...(reasoning === undefined ? {} : { reasoning }),
     };
   });
 
@@ -112,9 +173,9 @@ function parseCommandCodeModels(value: unknown) {
   return chatRecords.map(modelFromCatalogRecord);
 }
 
-async function fetchCommandCodeModels(context: RefreshModelsContext) {
+async function fetchCommandCodeModels(modelsUrl: string, context: RefreshModelsContext) {
   const signal = AbortSignal.any([context.signal, AbortSignal.timeout(10_000)]);
-  const response = await fetch(`${COMMAND_CODE_BASE_URL}/models`, { signal });
+  const response = await fetch(modelsUrl, { signal });
   if (!response.ok) {
     throw new Error(`Command Code model catalog request failed: ${response.status}`);
   }
@@ -126,15 +187,19 @@ export function createCommandCodeProvider(): Provider<
   "anthropic-messages" | "openai-completions" | "openai-responses"
 > {
   const headers = process.env.CMD_ZDR === "1" ? { "x-cmd-zdr": "1" } : undefined;
+  const commandCodeModelsUrl =
+    process.env.CMD_MODELS_URL?.trim() || DEFAULT_COMMAND_CODE_MODELS_URL;
   let authoritativeModelIds: ReadonlySet<string> | undefined;
 
   const provider = createProvider({
     id: "command-code",
     name: "Command Code",
     baseUrl: COMMAND_CODE_BASE_URL,
-    auth: { apiKey: envApiKeyAuth("Command Code API key", ["CMD_API_KEY"]) },
+    auth: {
+      apiKey: envApiKeyAuth("Command Code API key", ["CMD_API_KEY", "COMMAND_CODE_API_KEY"]),
+    },
     models: commandCodeModels,
-    fetchModels: fetchCommandCodeModels,
+    fetchModels: (context) => fetchCommandCodeModels(commandCodeModelsUrl, context),
     api: {
       "anthropic-messages": anthropicMessagesApi(),
       "openai-completions": openAICompletionsApi(),
@@ -155,6 +220,7 @@ export function createCommandCodeProvider(): Provider<
   provider.refreshModels = async (context) => {
     const migration = migrateStoredCatalog(context.stored);
     const stored = migration.stored;
+    const storedCatalog = stored as CommandCodeStoredCatalog | undefined;
     if (migration.migrated) {
       if (!(await context.publish({ persist: stored }))) return;
     }
@@ -162,6 +228,8 @@ export function createCommandCodeProvider(): Provider<
       context.allowNetwork &&
       !context.force &&
       stored?.checkedAt !== undefined &&
+      (storedCatalog?.commandCodeModelsUrl ?? DEFAULT_COMMAND_CODE_MODELS_URL) ===
+        commandCodeModelsUrl &&
       Date.now() - stored.checkedAt < CATALOG_REFRESH_INTERVAL_MS
     ) {
       return;
@@ -176,7 +244,10 @@ export function createCommandCodeProvider(): Provider<
             persist:
               publication.persist === null || publication.persist === undefined
                 ? publication.persist
-                : versionedCatalogEntry(publication.persist),
+                : versionedCatalogEntry({
+                    ...publication.persist,
+                    commandCodeModelsUrl,
+                  }),
             update: publication.update
               ? () => {
                   publication.update?.();

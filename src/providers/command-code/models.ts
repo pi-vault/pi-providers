@@ -16,6 +16,9 @@ export interface CommandCodeCatalogRecord {
   contextWindow: number;
   supportedEndpoints: readonly string[];
   maxOutputTokens?: number;
+  reasoning?: boolean;
+  input?: ("text" | "image")[];
+  cost?: ModelCost;
 }
 
 type CommandCodeModel =
@@ -25,6 +28,9 @@ type CommandCodeModel =
 
 const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 export const COMMAND_CODE_FALLBACK_MAX_TOKENS = 32_768;
+const OFFICIAL_VISION_FAMILY = /^(?:claude-|gpt-|google\/)/;
+const OFFICIAL_ADAPTIVE_THINKING_FAMILY =
+  /^claude-(?:opus-(?:4-[678]|5)|sonnet-(?:4-6|5)|fable-5|mythos-5)(?:-|$)/;
 
 const OPENAI_COMPAT: OpenAICompletionsCompat = {
   supportsStore: false,
@@ -97,14 +103,21 @@ export function modelFromCatalogRecord(record: CommandCodeCatalogRecord): Comman
   if (!usesMessages && !usesCompletions && !usesResponses) {
     throw new Error(`Unsupported Command Code model endpoints: ${record.id}`);
   }
+  const input: ("text" | "image")[] = record.input
+    ? [...record.input]
+    : donor
+      ? [...donor.input]
+      : OFFICIAL_VISION_FAMILY.test(record.id)
+        ? ["text", "image"]
+        : ["text"];
   const model = {
     id: record.id,
     name: record.name,
     provider: "command-code",
     baseUrl: usesMessages ? COMMAND_CODE_ANTHROPIC_BASE_URL : COMMAND_CODE_BASE_URL,
-    reasoning: donor?.reasoning ?? false,
-    input: donor ? [...donor.input] : (["text"] as ("text" | "image")[]),
-    cost: COMMAND_COSTS[record.id as CommandCodeCatalogId] ?? ZERO_COST,
+    reasoning: record.reasoning ?? donor?.reasoning ?? true,
+    input,
+    cost: record.cost ?? COMMAND_COSTS[record.id as CommandCodeCatalogId] ?? ZERO_COST,
     contextWindow: record.contextWindow,
     maxTokens: Math.min(
       record.maxOutputTokens ?? COMMAND_CODE_FALLBACK_MAX_TOKENS,
@@ -120,7 +133,9 @@ export function modelFromCatalogRecord(record: CommandCodeCatalogRecord): Comman
     };
     const anthropicDonor =
       donor?.api === "anthropic-messages" ? (donor as Model<"anthropic-messages">) : undefined;
-    const forceAdaptiveThinking = anthropicDonor?.compat?.forceAdaptiveThinking;
+    const forceAdaptiveThinking =
+      anthropicDonor?.compat?.forceAdaptiveThinking ||
+      OFFICIAL_ADAPTIVE_THINKING_FAMILY.test(record.id);
     return forceAdaptiveThinking
       ? { ...anthropic, compat: { forceAdaptiveThinking } satisfies AnthropicMessagesCompat }
       : anthropic;

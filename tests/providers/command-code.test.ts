@@ -2,6 +2,7 @@ import {
   createModels,
   InMemoryCredentialStore,
   InMemoryModelsStore,
+  type Api,
   type Model,
   normalizeContext,
 } from "@earendil-works/pi-ai";
@@ -46,6 +47,20 @@ function cachedLiveOnlyModel(): Model<"openai-completions"> {
     contextWindow: 32_000,
     maxTokens: 32_000,
   };
+}
+
+type CommandCodeTestStoredCatalog = {
+  models: Model<Api>[];
+  checkedAt?: number;
+  commandCodeCatalogVersion?: number;
+  commandCodeModelsUrl?: string;
+};
+
+async function writeCommandCodeCatalog(
+  modelsStore: InMemoryModelsStore,
+  entry: CommandCodeTestStoredCatalog,
+) {
+  await modelsStore.write("command-code", entry);
 }
 
 async function createRefreshModels(modelsStore = new InMemoryModelsStore()) {
@@ -145,7 +160,7 @@ describe("Command Code catalog conversion", () => {
         supportedEndpoints: ["/chat/completions"],
       }),
     ).toMatchObject({
-      reasoning: false,
+      reasoning: true,
       input: ["text"],
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       maxTokens: 32_000,
@@ -510,7 +525,7 @@ describe("Command Code catalog conversion", () => {
     }
   });
 
-  it("uses Pi metadata while preserving Command identity and context", () => {
+  it("uses donor metadata when live capability metadata is absent", () => {
     expect(
       modelFromCatalogRecord({
         id: "claude-sonnet-5",
@@ -528,6 +543,55 @@ describe("Command Code catalog conversion", () => {
       thinkingLevelMap: { xhigh: "xhigh", max: "max" },
       compat: { forceAdaptiveThinking: true },
     });
+  });
+
+  it("prefers Command Code metadata over donor and bundled metadata", () => {
+    expect(
+      modelFromCatalogRecord({
+        id: "claude-sonnet-5",
+        name: "Command Claude",
+        contextWindow: 1_000_000,
+        supportedEndpoints: ["/messages"],
+        reasoning: false,
+        input: ["text"],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      }),
+    ).toMatchObject({
+      reasoning: false,
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    });
+  });
+
+  it("uses official capability defaults when no Pi donor exists", () => {
+    expect(
+      modelFromCatalogRecord({
+        id: "gpt-future",
+        name: "GPT Future",
+        contextWindow: 100_000,
+        supportedEndpoints: ["/responses"],
+      }),
+    ).toMatchObject({ reasoning: true, input: ["text", "image"] });
+
+    expect(
+      modelFromCatalogRecord({
+        id: "vendor/future",
+        name: "Vendor Future",
+        contextWindow: 100_000,
+        supportedEndpoints: ["/chat/completions"],
+      }),
+    ).toMatchObject({ reasoning: true, input: ["text"] });
+  });
+
+  it("forces adaptive thinking for future Claude families without a donor", () => {
+    expect(
+      modelFromCatalogRecord({
+        id: "claude-mythos-5",
+        name: "Claude Mythos 5",
+        contextWindow: 1_000_000,
+        supportedEndpoints: ["/messages"],
+      }),
+    ).toMatchObject({ compat: { forceAdaptiveThinking: true } });
   });
 
   it.each([
@@ -587,17 +651,38 @@ describe("Command Code catalog conversion", () => {
     expect(provider.auth.apiKey?.name).toBe("Command Code API key");
   });
 
-  it("resolves CMD_API_KEY authentication", async () => {
+  async function resolveApiKey(env: Record<string, string | undefined>) {
     const apiKey = createCommandCodeProvider().auth.apiKey;
-    const auth = await apiKey?.resolve({
+    return apiKey?.resolve({
       ctx: {
-        env: async (name) => (name === "CMD_API_KEY" ? "test-key" : undefined),
+        env: async (name) => env[name],
         fileExists: async () => false,
       },
       signal: new AbortController().signal,
     });
+  }
 
-    expect(auth).toEqual({ auth: { apiKey: "test-key" }, source: "CMD_API_KEY" });
+  it("resolves CMD_API_KEY authentication", async () => {
+    await expect(resolveApiKey({ CMD_API_KEY: "primary" })).resolves.toMatchObject({
+      auth: { apiKey: "primary" },
+      source: "CMD_API_KEY",
+    });
+  });
+
+  it("resolves COMMAND_CODE_API_KEY authentication", async () => {
+    await expect(resolveApiKey({ COMMAND_CODE_API_KEY: "alias" })).resolves.toMatchObject({
+      auth: { apiKey: "alias" },
+      source: "COMMAND_CODE_API_KEY",
+    });
+  });
+
+  it("prefers CMD_API_KEY over COMMAND_CODE_API_KEY", async () => {
+    await expect(
+      resolveApiKey({ CMD_API_KEY: "primary", COMMAND_CODE_API_KEY: "alias" }),
+    ).resolves.toMatchObject({
+      auth: { apiKey: "primary" },
+      source: "CMD_API_KEY",
+    });
   });
 
   it("adds model ZDR headers only when CMD_ZDR is 1", () => {
@@ -651,6 +736,103 @@ describe("Command Code registration", () => {
 });
 
 describe("Command Code live catalog", () => {
+  it("fetches the default Command Code models URL", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(validPayload));
+    const { models } = await createRefreshModels();
+
+    await models.refresh({ providers: ["command-code"], force: true });
+
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(fetch.mock.calls[0]?.[0]).toBe("https://api.commandcode.ai/provider/v1/models");
+  });
+
+  it("uses the default models URL for a blank CMD_MODELS_URL", async () => {
+    vi.stubEnv("CMD_MODELS_URL", "  ");
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(validPayload));
+    const { models } = await createRefreshModels();
+
+    await models.refresh({ providers: ["command-code"], force: true });
+
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(fetch.mock.calls[0]?.[0]).toBe("https://api.commandcode.ai/provider/v1/models");
+  });
+
+  it("fetches a configured CMD_MODELS_URL despite a fresh cache from another source", async () => {
+    const configuredUrl = "https://catalog.example.test/models";
+    vi.stubEnv("CMD_MODELS_URL", configuredUrl);
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(validPayload));
+    const modelsStore = new InMemoryModelsStore();
+    await writeCommandCodeCatalog(modelsStore, {
+      models: [cachedLiveOnlyModel()],
+      checkedAt: Date.now(),
+      commandCodeCatalogVersion: 1,
+      commandCodeModelsUrl: "https://api.commandcode.ai/provider/v1/models",
+    });
+    const { models } = await createRefreshModels(modelsStore);
+
+    await models.refresh({ providers: ["command-code"] });
+
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(fetch.mock.calls[0]?.[0]).toBe(configuredUrl);
+    expect(
+      (await modelsStore.read("command-code")) as CommandCodeTestStoredCatalog | undefined,
+    ).toMatchObject({ commandCodeModelsUrl: configuredUrl });
+  });
+
+  it("throttles a fresh cache from the configured source", async () => {
+    const configuredUrl = "https://catalog.example.test/models";
+    vi.stubEnv("CMD_MODELS_URL", configuredUrl);
+    const fetch = vi.spyOn(globalThis, "fetch");
+    const modelsStore = new InMemoryModelsStore();
+    await writeCommandCodeCatalog(modelsStore, {
+      models: [cachedLiveOnlyModel()],
+      checkedAt: Date.now(),
+      commandCodeCatalogVersion: 1,
+      commandCodeModelsUrl: configuredUrl,
+    });
+    const { models } = await createRefreshModels(modelsStore);
+
+    await models.refresh({ providers: ["command-code"] });
+
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("retries a configured source after its previous refresh failed", async () => {
+    const configuredUrl = "https://catalog.example.test/models";
+    const defaultUrl = "https://api.commandcode.ai/provider/v1/models";
+    vi.stubEnv("CMD_MODELS_URL", configuredUrl);
+    const fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response("down", { status: 503 }))
+      .mockResolvedValueOnce(jsonResponse(validPayload));
+    const modelsStore = new InMemoryModelsStore();
+    const cached = cachedLiveOnlyModel();
+    await writeCommandCodeCatalog(modelsStore, {
+      models: [cached],
+      checkedAt: Date.now(),
+      commandCodeCatalogVersion: 1,
+      commandCodeModelsUrl: defaultUrl,
+    });
+    const { models } = await createRefreshModels(modelsStore);
+
+    const first = await models.refresh({ providers: ["command-code"] });
+    const failed = (await modelsStore.read("command-code")) as
+      | CommandCodeTestStoredCatalog
+      | undefined;
+    const second = await models.refresh({ providers: ["command-code"] });
+
+    expect(first.errors.get("command-code")).toBeInstanceOf(Error);
+    expect(failed?.models).toEqual([cached]);
+    expect(failed?.commandCodeModelsUrl).toBe(defaultUrl);
+    expect(second.errors.size).toBe(0);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch.mock.calls[0]?.[0]).toBe(configuredUrl);
+    expect(fetch.mock.calls[1]?.[0]).toBe(configuredUrl);
+    expect(
+      (await modelsStore.read("command-code")) as CommandCodeTestStoredCatalog | undefined,
+    ).toMatchObject({ commandCodeModelsUrl: configuredUrl });
+  });
+
   it("converts and persists a valid forced refresh", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(validPayload));
     const { models, modelsStore } = await createRefreshModels();
@@ -672,6 +854,62 @@ describe("Command Code live catalog", () => {
       expect.arrayContaining([expect.objectContaining({ id: "new-model" })]),
     );
     expect(stored?.checkedAt).toEqual(expect.any(Number));
+  });
+
+  it("parses and persists optional Command Code metadata", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({
+        object: "list",
+        data: [
+          {
+            id: "metadata-model",
+            name: "Metadata Model",
+            context_length: 32_000,
+            supported_endpoints: ["/chat/completions"],
+            pricing: { input: 0, output: 9, cache_read: 0.25 },
+            modalities: { input: ["text", "image"] },
+            reasoning: false,
+          },
+        ],
+      }),
+    );
+    const { models, modelsStore } = await createRefreshModels();
+
+    await models.refresh({ providers: ["command-code"], force: true });
+
+    const expected = {
+      reasoning: false,
+      input: ["text", "image"],
+      cost: { input: 0, output: 9, cacheRead: 0.25, cacheWrite: 0 },
+    };
+    expect(models.getModel("command-code", "metadata-model")).toMatchObject(expected);
+    expect((await modelsStore.read("command-code"))?.models).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "metadata-model", ...expected })]),
+    );
+  });
+
+  it("treats modalities without input as absent metadata", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({
+        object: "list",
+        data: [
+          {
+            id: "claude-sonnet-5",
+            name: "Claude Sonnet 5",
+            context_length: 1_000_000,
+            supported_endpoints: ["/messages"],
+            modalities: {},
+          },
+        ],
+      }),
+    );
+    const { models } = await createRefreshModels();
+
+    await models.refresh({ providers: ["command-code"], force: true });
+
+    expect(models.getModel("command-code", "claude-sonnet-5")).toMatchObject({
+      input: ["text", "image"],
+    });
   });
 
   const invalidCases: Array<[name: string, payload: unknown, status?: number]> = [
@@ -828,6 +1066,96 @@ describe("Command Code live catalog", () => {
       },
     ],
     [
+      "array pricing",
+      {
+        object: "list",
+        data: [
+          {
+            id: "id",
+            name: "Name",
+            context_length: 1000,
+            supported_endpoints: ["/messages"],
+            pricing: [],
+          },
+        ],
+      },
+    ],
+    [
+      "negative pricing input",
+      {
+        object: "list",
+        data: [
+          {
+            id: "id",
+            name: "Name",
+            context_length: 1000,
+            supported_endpoints: ["/messages"],
+            pricing: { input: -1 },
+          },
+        ],
+      },
+    ],
+    [
+      "string pricing output",
+      {
+        object: "list",
+        data: [
+          {
+            id: "id",
+            name: "Name",
+            context_length: 1000,
+            supported_endpoints: ["/messages"],
+            pricing: { output: "9" },
+          },
+        ],
+      },
+    ],
+    [
+      "array modalities",
+      {
+        object: "list",
+        data: [
+          {
+            id: "id",
+            name: "Name",
+            context_length: 1000,
+            supported_endpoints: ["/messages"],
+            modalities: [],
+          },
+        ],
+      },
+    ],
+    [
+      "non-string modality input",
+      {
+        object: "list",
+        data: [
+          {
+            id: "id",
+            name: "Name",
+            context_length: 1000,
+            supported_endpoints: ["/messages"],
+            modalities: { input: ["text", 1] },
+          },
+        ],
+      },
+    ],
+    [
+      "string reasoning",
+      {
+        object: "list",
+        data: [
+          {
+            id: "id",
+            name: "Name",
+            context_length: 1000,
+            supported_endpoints: ["/messages"],
+            reasoning: "true",
+          },
+        ],
+      },
+    ],
+    [
       "wrong object",
       { object: "models", data: [{ id: "id", name: "Name", context_length: 1000 }] },
     ],
@@ -979,6 +1307,7 @@ describe("Command Code live catalog", () => {
       models: [cached],
       checkedAt,
       commandCodeCatalogVersion: 1,
+      commandCodeModelsUrl: "https://api.commandcode.ai/provider/v1/models",
     });
   });
 
