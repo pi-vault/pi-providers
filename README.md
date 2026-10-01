@@ -67,32 +67,31 @@ Ask Pi normally; there is no provider-specific prompt syntax. Image input works 
 
 `typesafe_decide` is a tool, not a selectable chat model, so it never appears in the model picker and never accepts a chat prompt. Pi calls it like any other tool — see [TypeSafe Decisions](#typesafe-decisions).
 
+## What's New In 0.4.1
+
+- **`COMMAND_CODE_API_KEY` alias and catalog-only `CMD_MODELS_URL` override** — `CMD_API_KEY` keeps precedence; `CMD_MODELS_URL` changes only where the live model catalog is fetched, never where inference requests are sent. Inference bases are unchanged.
+- **Live `pricing`, `modalities`, and `reasoning` metadata with strict catalog validation** — valid live fields override local estimates; missing fields fall back to Pi donor metadata, official family defaults, or the dated bundled pricing snapshot. Malformed refreshes retain the prior catalog.
+- **Official family and adaptive-thinking fallbacks** — retained alongside the bundled snapshot and offline cache. Pricing for temporary offers uses the rates advertised on 2026-09-30.
+- **Command Code output-cap and cache migration** — default max output raised to 32,768 capped by each model's context window. Legacy cache records are migrated in place.
+- **OpenAI Responses routing** — supported alongside Anthropic Messages and OpenAI Chat Completions. Records advertising only `/responses` no longer get filtered out.
+- **86-model bundled snapshot** — captured 2026-09-30 (was 82). See [`CHANGELOG.md`](CHANGELOG.md) for the full release notes.
+
 ## What's New In 0.4.0
 
 - **`typesafe_decide` tool** (new) — answers typed Noul, Choice, and Score questions against a JSON `state` with TypeSafe Jev and returns structured probabilities, not generated text. Calls TypeSafe System One directly when a `TYPESAFE_API_KEY` or host-resolved `typesafe` credential is present; otherwise makes a single fallback request to `typesafe/jev` through `command-code`. Direct `400` / `422` responses and cancellation are terminal and never fall back. System One requests never inherit `CMD_ZDR`, because `typesafe/jev` has no ZDR-capable Command Code upstream — the tool provides no enforced-ZDR mode.
 - **Command Code catalog refreshed to 82 models** — snapshot captured 2026-09-27 (was 62). Routing is declared per record: `/messages` takes precedence, `/chat/completions` is used otherwise, and records advertising only `/responses` are filtered out because this package does not implement Responses API transport. Pricing estimates were also refreshed against the 2026-09-27 rates. See [`CHANGELOG.md`](CHANGELOG.md) for the full release notes.
 
-## What's New In 0.3.1
-
-- **`command-code` import consolidation** — `command-code.ts` now imports `anthropicMessagesApi`, `openAICompletionsApi`, `createProvider`, `Provider`, and `RefreshModelsContext` from a single `@earendil-works/pi-ai/compat` entry point. No behavior change.
-
-## What's New In 0.3.0
-
-- **`command-code` provider** (new) — `CMD_API_KEY` authentication, optional `CMD_ZDR=1` zero-data-retention requests, and endpoint-declared routing (Anthropic Messages when the record declares `/messages`, otherwise OpenAI Chat Completions).
-- **Live catalog overlay** — Command Code fetches its model list from `https://api.commandcode.ai/provider/v1/models`, refreshes at most every four hours, and persists the last successful overlay for offline restore. On first run, or after a refresh failure, the bundled snapshot stays visible until a refresh succeeds.
-- **Toolchain updates** — TypeScript 7, Biome 2.5.11 schema. No code changes were required for the TypeScript bump. See [`CHANGELOG.md`](CHANGELOG.md) for the full release notes.
-
 ## Providers And Models
 
-| Provider                               | Model                      | Input       | Reasoning                 | Context   | Max output | Input / output per 1M tokens | Cache read |
-| -------------------------------------- | -------------------------- | ----------- | ------------------------- | --------- | ---------- | ---------------------------- | ---------- |
-| `minimax-openai` / `minimax-openai-cn` | `MiniMax-M3`               | text, image | yes                       | 1,000,000 | 512,000    | $0.60 / $2.40                | $0.12      |
-| `minimax-openai` / `minimax-openai-cn` | `MiniMax-M2.7`             | text        | yes                       | 204,800   | 131,072    | $0.30 / $1.20                | $0.06      |
-| `minimax-openai` / `minimax-openai-cn` | `MiniMax-M2.7-highspeed`   | text        | yes                       | 204,800   | 131,072    | $0.60 / $2.40                | $0.06      |
-| `stepfun-ai`                           | `step-3.7-flash`           | text, image | low / medium / high       | 256,000   | 256,000    | $0.20 / $1.15                | $0.04      |
-| `stepfun-ai`                           | `step-3.5-flash-2603`      | text        | low / high                | 256,000   | 256,000    | $0.10 / $0.30                | $0.02      |
-| `stepfun-ai`                           | `step-3.5-flash`           | text        | automatic (shown as high) | 256,000   | 256,000    | $0.10 / $0.30                | $0.02      |
-| `command-code`                         | 86 bundled snapshot models (captured 2026-09-30) | varies      | varies                    | varies    | up to min(32,768, context) | dated snapshot               | varies     |
+| Provider                               | Model                                            | Input       | Reasoning                 | Context   | Max output                 | Input / output per 1M tokens | Cache read |
+| -------------------------------------- | ------------------------------------------------ | ----------- | ------------------------- | --------- | -------------------------- | ---------------------------- | ---------- |
+| `minimax-openai` / `minimax-openai-cn` | `MiniMax-M3`                                     | text, image | yes                       | 1,000,000 | 512,000                    | $0.60 / $2.40                | $0.12      |
+| `minimax-openai` / `minimax-openai-cn` | `MiniMax-M2.7`                                   | text        | yes                       | 204,800   | 131,072                    | $0.30 / $1.20                | $0.06      |
+| `minimax-openai` / `minimax-openai-cn` | `MiniMax-M2.7-highspeed`                         | text        | yes                       | 204,800   | 131,072                    | $0.60 / $2.40                | $0.06      |
+| `stepfun-ai`                           | `step-3.7-flash`                                 | text, image | low / medium / high       | 256,000   | 256,000                    | $0.20 / $1.15                | $0.04      |
+| `stepfun-ai`                           | `step-3.5-flash-2603`                            | text        | low / high                | 256,000   | 256,000                    | $0.10 / $0.30                | $0.02      |
+| `stepfun-ai`                           | `step-3.5-flash`                                 | text        | automatic (shown as high) | 256,000   | 256,000                    | $0.10 / $0.30                | $0.02      |
+| `command-code`                         | 86 bundled snapshot models (captured 2026-09-30) | varies      | varies                    | varies    | up to min(32,768, context) | varies                       | varies     |
 
 API bases:
 
