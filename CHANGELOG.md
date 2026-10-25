@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `typesafe_decide` now accepts the documented TypeSafe text-question contract: optional or null instructions, Noul questions described by a non-null `true` / `false` criterion when instructions are absent, 1–255 Choice options with nullable descriptions, and 1–10 non-null Score levels. Omitted fields and explicit null keep their distinct wire shapes.
+- `typesafe_decide` blocks Command Code System One requests above 100 questions on both the initial gateway route and retryable fallback, while direct TypeSafe requests remain unrestricted. An oversized direct failure reports the sanitized direct cause plus the gateway restriction and is never split or forwarded.
+
 ## 2026-09-30 - [0.4.1]
 
 ### Added

@@ -1,13 +1,18 @@
 // tests/tools/typesafe-decide.test.ts
 
+import { validateToolArguments } from "@earendil-works/pi-ai";
 import type {
   ExtensionAPI,
   ExtensionContext,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type { TSchema } from "typebox";
+import { Compile } from "typebox/compile";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { registerTypeSafeDecisionTool } from "../../src/tools/typesafe-decide.ts";
+import {
+  type DecideParams,
+  registerTypeSafeDecisionTool,
+} from "../../src/tools/typesafe-decide.ts";
 
 const DIRECT_URL = "https://api.typesafe.ai/v1/systemone";
 const FALLBACK_URL = "https://api.commandcode.ai/provider/v1/systemone";
@@ -73,18 +78,21 @@ type ParametersSchema = {
     questions: {
       minProperties: number;
       additionalProperties: {
-        anyOf: Array<{
-          properties: {
-            criteria: {
-              required?: string[];
-              minProperties?: number;
-              maxProperties?: number;
-              minItems?: number;
-              maxItems?: number;
-            };
-          };
-        }>;
+        anyOf: QuestionVariant[];
       };
+    };
+  };
+};
+
+type QuestionVariant = {
+  properties: {
+    type: { const?: string };
+    criteria: {
+      required?: string[];
+      minProperties?: number;
+      maxProperties?: number;
+      minItems?: number;
+      maxItems?: number;
     };
   };
 };
@@ -139,6 +147,105 @@ function callTool(
   return harness.tool.execute("tc_1", params, signal, undefined, harness.ctx) as never;
 }
 
+function callValidatedTool(
+  harness: ReturnType<typeof createHarness>,
+  params: unknown,
+  signal?: AbortSignal,
+): ReturnType<typeof callTool> {
+  const validated = validateToolArguments(harness.tool as never, {
+    type: "toolCall",
+    id: "tc_validated",
+    name: "typesafe_decide",
+    arguments: params as never,
+  });
+  return callTool(harness, validated, signal);
+}
+
+function rawSchemaAccepts(harness: ReturnType<typeof createHarness>, params: unknown): boolean {
+  return Compile(harness.tool.parameters as TSchema).Check(params);
+}
+
+function answerForQuestion(question: unknown): Record<string, unknown> {
+  const typed = question as { type: string; criteria?: unknown };
+  if (typed.type === "noul") return { type: "noul", noul: 0.5 };
+  if (typed.type === "choice") {
+    const options = Object.getOwnPropertyNames(typed.criteria as object);
+    return {
+      type: "choice",
+      choice: options[0],
+      confidence: 1,
+      probabilities: Object.fromEntries(
+        options.map((option, index) => [option, index === 0 ? 1 : 0]),
+      ),
+    };
+  }
+  const levels = (typed.criteria as unknown[]).map((_, index) => String(index));
+  return {
+    type: "score",
+    score: 0,
+    confidence: 1,
+    legend: Object.fromEntries(
+      levels.map((level, index) => [level, (typed.criteria as unknown[])[index]]),
+    ),
+    probabilities: Object.fromEntries(levels.map((level, index) => [level, index === 0 ? 1 : 0])),
+  };
+}
+
+function answersFor(questions: Record<string, unknown>): Record<string, unknown> {
+  const answers = Object.create(null) as Record<string, unknown>;
+  for (const id of Object.getOwnPropertyNames(questions)) {
+    answers[id] = answerForQuestion(questions[id]);
+  }
+  return answers;
+}
+
+function responseFor(questions: Record<string, unknown>, model: string) {
+  return {
+    model,
+    answers: answersFor(questions),
+    usage: { input_tokens: 11, output_tokens: 4 },
+  };
+}
+
+function noulQuestions(count: number): Record<string, unknown> {
+  return Object.fromEntries(
+    Array.from({ length: count }, (_, index) => [
+      `question_${index}`,
+      { type: "noul", instructions: `Question ${index}?` },
+    ]),
+  );
+}
+
+async function runAccepted(
+  options: HarnessOptions,
+  model: string,
+  questions: Record<string, unknown>,
+  validated: boolean,
+) {
+  const harness = createHarness(options);
+  const { requests } = installFetch([() => jsonResponse(responseFor(questions, model))]);
+  const params = { state, questions };
+  const result = validated
+    ? await callValidatedTool(harness, params)
+    : await callTool(harness, params);
+  const sent = (await requests[0]?.json()) as { questions: Record<string, unknown> };
+  return { harness, requests, result, sent };
+}
+
+const acceptedQuestions = {
+  criteria_only: { type: "noul", criteria: { true: "Ready to ship" } },
+  false_only: { type: "noul", instructions: null, criteria: { false: "Blocked", true: null } },
+  true_only: { type: "noul", instructions: null, criteria: { true: "Ready to ship" } },
+  instructions_only: { type: "noul", instructions: "Ready?" },
+  null_criteria: { type: "noul", instructions: "Ready?", criteria: null },
+  null_outcomes: { type: "noul", instructions: "Ready?", criteria: { true: null, false: null } },
+  empty_criteria: { type: "noul", instructions: "Ready?", criteria: {} },
+  single_choice: { type: "choice", criteria: { only: null } },
+  choice_null_instructions: { type: "choice", instructions: null, criteria: { only: null } },
+  single_score: { type: "score", instructions: null, criteria: ["Only level"] },
+  score_omitted_instructions: { type: "score", criteria: ["Only level"] },
+} satisfies DecideParams["questions"];
+
 beforeEach(() => {
   vi.stubEnv("TYPESAFE_API_KEY", undefined);
   vi.stubEnv("CMD_ZDR", undefined);
@@ -155,13 +262,15 @@ describe("TypeSafe decide schema and preflight", () => {
     const { tool } = createHarness();
     const schema = tool.parameters as unknown as ParametersSchema;
     const variants = schema.properties.questions.additionalProperties.anyOf;
+    const variant = (type: string) =>
+      variants.find((item) => item.properties.type.const === type) as QuestionVariant;
 
     expect(schema.properties.questions.minProperties).toBe(1);
-    expect(variants[0].properties.criteria.required).toBeUndefined();
-    expect(variants[1].properties.criteria.minProperties).toBe(2);
-    expect(variants[1].properties.criteria.maxProperties).toBe(255);
-    expect(variants[2].properties.criteria.minItems).toBe(2);
-    expect(variants[2].properties.criteria.maxItems).toBe(10);
+    expect(variant("noul").properties.criteria.required).toBeUndefined();
+    expect(variant("choice").properties.criteria.minProperties).toBe(1);
+    expect(variant("choice").properties.criteria.maxProperties).toBe(255);
+    expect(variant("score").properties.criteria.minItems).toBe(1);
+    expect(variant("score").properties.criteria.maxItems).toBe(10);
   });
 
   it("rejects an empty question map without fetching", async () => {
@@ -191,45 +300,336 @@ describe("TypeSafe decide schema and preflight", () => {
     ]);
   });
 
-  it("rejects Choice criteria outside 2–255 options without fetching", async () => {
+  it("accepts criteria-only questions through Pi validation", async () => {
+    const subset = {
+      criteria_only: acceptedQuestions.criteria_only,
+      true_only: acceptedQuestions.true_only,
+      instructions_only: acceptedQuestions.instructions_only,
+    };
+    const schemaHarness = createHarness();
+
+    for (const options of [
+      { typesafeKey: DIRECT_KEY, commandKey: FALLBACK_KEY },
+      { typesafeKey: undefined, commandKey: FALLBACK_KEY },
+    ]) {
+      const model = options.typesafeKey ? "jev-1.14.0" : "typesafe/jev";
+      for (const [id, question] of Object.entries(subset)) {
+        const questions = { [id]: question };
+        expect(rawSchemaAccepts(schemaHarness, { state, questions })).toBe(true);
+
+        for (const validated of [false, true]) {
+          const { requests, result, sent } = await runAccepted(
+            options,
+            model,
+            questions,
+            validated,
+          );
+          expect(requests).toHaveLength(1);
+          expect(sent.questions).toEqual(questions);
+          expect(result.details.backend).toBe(options.typesafeKey ? "typesafe" : "command-code");
+          expect(result.details.model).toBe(model);
+        }
+      }
+    }
+
+    const { sent } = await runAccepted(
+      { typesafeKey: DIRECT_KEY },
+      "jev-1.14.0",
+      { criteria_only: acceptedQuestions.criteria_only },
+      false,
+    );
+    expect(Object.hasOwn(sent.questions.criteria_only as object, "instructions")).toBe(false);
+
+    const instructionsOnly = await runAccepted(
+      { typesafeKey: DIRECT_KEY },
+      "jev-1.14.0",
+      { instructions_only: acceptedQuestions.instructions_only },
+      true,
+    );
+    expect(
+      Object.hasOwn(instructionsOnly.sent.questions.instructions_only as object, "criteria"),
+    ).toBe(false);
+  });
+
+  it("preserves explicit null fields through Pi validation", async () => {
+    const ids = [
+      "false_only",
+      "null_criteria",
+      "null_outcomes",
+      "empty_criteria",
+      "single_choice",
+      "choice_null_instructions",
+      "single_score",
+      "score_omitted_instructions",
+    ] as const;
+    const schemaHarness = createHarness();
+
+    for (const options of [
+      { typesafeKey: DIRECT_KEY, commandKey: FALLBACK_KEY },
+      { typesafeKey: undefined, commandKey: FALLBACK_KEY },
+    ]) {
+      const model = options.typesafeKey ? "jev-1.14.0" : "typesafe/jev";
+      for (const id of ids) {
+        const questions = { [id]: acceptedQuestions[id] };
+        expect(rawSchemaAccepts(schemaHarness, { state, questions })).toBe(true);
+
+        for (const validated of [false, true]) {
+          const { result, sent } = await runAccepted(options, model, questions, validated);
+          expect(sent.questions).toEqual(questions);
+          expect(result.details.backend).toBe(options.typesafeKey ? "typesafe" : "command-code");
+
+          if (id === "false_only") {
+            const sentQuestion = sent.questions.false_only as {
+              instructions: unknown;
+              criteria: Record<string, unknown>;
+            };
+            expect(sentQuestion.instructions).toBeNull();
+            expect(sentQuestion.criteria.true).toBeNull();
+            expect(sentQuestion.criteria.false).toBe("Blocked");
+          }
+          if (id === "null_criteria") {
+            expect((sent.questions.null_criteria as { criteria: unknown }).criteria).toBeNull();
+          }
+          if (id === "single_choice" || id === "choice_null_instructions") {
+            expect(Object.hasOwn(sent.questions[id] as object, "instructions")).toBe(
+              id === "choice_null_instructions",
+            );
+          }
+          if (id === "score_omitted_instructions") {
+            expect(
+              Object.hasOwn(sent.questions.score_omitted_instructions as object, "instructions"),
+            ).toBe(false);
+          }
+          if (id === "single_score") {
+            expect(
+              (sent.questions.single_score as { instructions: unknown }).instructions,
+            ).toBeNull();
+            expect(result.details.answers.single_score).toEqual({
+              type: "score",
+              score: 0,
+              confidence: 1,
+              legend: { "0": "Only level" },
+              probabilities: { "0": 1 },
+            });
+          }
+          if (id === "single_choice") {
+            expect(result.details.answers.single_choice).toMatchObject({
+              choice: "only",
+              probabilities: { only: 1 },
+            });
+          }
+        }
+      }
+    }
+  });
+
+  it("requires a non-null Noul description without instructions", async () => {
+    const invalidNouls = [
+      { type: "noul" },
+      { type: "noul", instructions: null },
+      { type: "noul", instructions: null, criteria: null },
+      { type: "noul", instructions: null, criteria: {} },
+      { type: "noul", instructions: null, criteria: { true: null } },
+      { type: "noul", instructions: null, criteria: { false: null } },
+      { type: "noul", instructions: null, criteria: { true: null, false: null } },
+    ];
+
+    for (const question of invalidNouls) {
+      const params = { state, questions: { invalid: question } };
+      const harness = createHarness({ typesafeKey: DIRECT_KEY });
+      const { fetchMock } = installFetch([() => jsonResponse(successBody)]);
+
+      expect(rawSchemaAccepts(harness, params)).toBe(false);
+      await expect(callTool(harness, params)).rejects.toThrow(/noul/i);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(harness.getApiKeyForProvider).not.toHaveBeenCalled();
+    }
+  });
+
+  it("rejects unknown Noul outcome keys", async () => {
+    const params = {
+      state,
+      questions: {
+        invalid: {
+          type: "noul",
+          instructions: "Ready?",
+          criteria: { maybe: "Ready" },
+        },
+      },
+    };
     const harness = createHarness({ typesafeKey: DIRECT_KEY });
     const { fetchMock } = installFetch([() => jsonResponse(successBody)]);
 
-    await expect(
-      callTool(harness, {
-        state,
-        questions: {
-          department: {
-            type: "choice",
-            instructions: "Which team?",
-            criteria: { billing: "Payments" },
-          },
-        },
-      }),
-    ).rejects.toThrow(/between 2 and 255 options/i);
-
-    await expect(
-      callTool(harness, {
-        state,
-        questions: {
-          department: {
-            type: "choice",
-            instructions: "Which team?",
-            criteria: Object.fromEntries(
-              Array.from({ length: 256 }, (_, i) => [`option_${i}`, "rubric"]),
-            ),
-          },
-        },
-      }),
-    ).rejects.toThrow(/between 2 and 255 options/i);
-
+    expect(rawSchemaAccepts(harness, params)).toBe(false);
+    await expect(callTool(harness, params)).rejects.toThrow(/may only describe/i);
     expect(fetchMock).not.toHaveBeenCalled();
     expect(harness.getApiKeyForProvider).not.toHaveBeenCalled();
+  });
+
+  it("uses only own Noul outcome keys", async () => {
+    const accepted = {
+      state,
+      questions: {
+        valid: { type: "noul", instructions: null, criteria: { true: "Ready to ship" } },
+      },
+    };
+    const harness = createHarness({ typesafeKey: DIRECT_KEY });
+    const { requests } = installFetch([
+      () => jsonResponse(responseFor(accepted.questions, "jev-1.14.0")),
+    ]);
+
+    expect(rawSchemaAccepts(harness, accepted)).toBe(true);
+    await callTool(harness, accepted);
+    const sent = (await requests[0]?.json()) as {
+      questions: { valid: { criteria: Record<string, unknown> } };
+    };
+    expect(Object.getOwnPropertyNames(sent.questions.valid.criteria)).toEqual(["true"]);
+
+    const inheritedOnly = Object.create({ true: "Inherited" }) as Record<string, unknown>;
+    const rejected = {
+      state,
+      questions: { invalid: { type: "noul", instructions: null, criteria: inheritedOnly } },
+    };
+    const rejectedHarness = createHarness({ typesafeKey: DIRECT_KEY });
+    const { fetchMock } = installFetch([() => jsonResponse(successBody)]);
+
+    expect(rawSchemaAccepts(rejectedHarness, JSON.parse(JSON.stringify(rejected)))).toBe(false);
+    await expect(callTool(rejectedHarness, rejected)).rejects.toThrow(/noul/i);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(rejectedHarness.getApiKeyForProvider).not.toHaveBeenCalled();
+  });
+
+  it("accepts exact Choice and Score boundaries", async () => {
+    const cases: Record<string, Record<string, unknown>> = {
+      choice_one: { type: "choice", instructions: "Pick", criteria: { only: null } },
+      choice_255: {
+        type: "choice",
+        instructions: "Pick",
+        criteria: Object.fromEntries(
+          Array.from({ length: 255 }, (_, index) => [`option_${index}`, null]),
+        ),
+      },
+      score_one: { type: "score", instructions: "Rate", criteria: ["Only level"] },
+      score_ten: {
+        type: "score",
+        instructions: "Rate",
+        criteria: Array.from({ length: 10 }, (_, index) => `level ${index}`),
+      },
+    };
+    const schemaHarness = createHarness();
+
+    for (const [id, question] of Object.entries(cases)) {
+      const questions = { [id]: question };
+      const params = { state, questions };
+      expect(rawSchemaAccepts(schemaHarness, params)).toBe(true);
+
+      const harness = createHarness({ typesafeKey: DIRECT_KEY });
+      const { requests } = installFetch([() => jsonResponse(responseFor(questions, "jev-1.14.0"))]);
+      const result = await callTool(harness, params);
+
+      expect(requests).toHaveLength(1);
+      expect(await requests[0]?.json()).toEqual({
+        state,
+        model: "jev-latest",
+        questions,
+      });
+      expect(result.details.answers[id]).toEqual(answerForQuestion(question));
+    }
+  });
+
+  it("rejects out-of-range criteria before credentials", async () => {
+    const cases = [
+      {
+        question: { type: "choice", instructions: "Which?", criteria: {} },
+        message: /between 1 and 255 options/i,
+      },
+      {
+        question: {
+          type: "choice",
+          instructions: "Which?",
+          criteria: Object.fromEntries(
+            Array.from({ length: 256 }, (_, index) => [`option_${index}`, "rubric"]),
+          ),
+        },
+        message: /between 1 and 255 options/i,
+      },
+      {
+        question: { type: "score", instructions: "How much?", criteria: [] },
+        message: /between 1 and 10 levels/i,
+      },
+      {
+        question: {
+          type: "score",
+          instructions: "How much?",
+          criteria: Array.from({ length: 11 }, (_, index) => `level ${index}`),
+        },
+        message: /between 1 and 10 levels/i,
+      },
+    ];
+
+    for (const { question, message } of cases) {
+      const params = { state, questions: { invalid: question } };
+      const harness = createHarness({ typesafeKey: DIRECT_KEY });
+      const { fetchMock } = installFetch([() => jsonResponse(successBody)]);
+
+      expect(rawSchemaAccepts(harness, params)).toBe(false);
+      await expect(callTool(harness, params)).rejects.toThrow(message);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(harness.getApiKeyForProvider).not.toHaveBeenCalled();
+    }
+  });
+
+  it("rejects null Score levels and scalar descriptions", async () => {
+    const cases = [
+      {
+        question: { type: "score", instructions: "How much?", criteria: ["Low", null] },
+        message: /score level 1 must be a string, object, or array/i,
+      },
+      {
+        question: { type: "noul", instructions: 42 },
+        message: /instructions must be a string, object, or array or null/i,
+      },
+      {
+        question: { type: "noul", instructions: true },
+        message: /instructions must be a string, object, or array or null/i,
+      },
+      {
+        question: {
+          type: "noul",
+          instructions: "Is this valid?",
+          criteria: { true: 1 },
+        },
+        message: /criterion "true" must be a string, object, or array or null/i,
+      },
+      {
+        question: {
+          type: "choice",
+          instructions: "Which?",
+          criteria: { yes: 1, no: false },
+        },
+        message: /must describe the option/i,
+      },
+    ];
+
+    for (const { question, message } of cases) {
+      const params = { state, questions: { invalid: question } };
+      const harness = createHarness({ typesafeKey: DIRECT_KEY });
+      const { fetchMock } = installFetch([() => jsonResponse(successBody)]);
+
+      expect(rawSchemaAccepts(harness, params)).toBe(false);
+      await expect(callTool(harness, params)).rejects.toThrow(message);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(harness.getApiKeyForProvider).not.toHaveBeenCalled();
+    }
   });
 
   it("rejects non-JSON nested values without fetching", async () => {
     const harness = createHarness({ typesafeKey: DIRECT_KEY });
     const { fetchMock } = installFetch([() => jsonResponse(successBody)]);
+    const cyclicState: Record<string, unknown> = {};
+    cyclicState.self = cyclicState;
+    const cyclicDescription: Record<string, unknown> = {};
+    cyclicDescription.self = cyclicDescription;
 
     await expect(
       callTool(harness, {
@@ -269,6 +669,51 @@ describe("TypeSafe decide schema and preflight", () => {
 
     await expect(
       callTool(harness, {
+        state: Number.NaN,
+        questions: {
+          valid: { type: "noul", instructions: "Is this valid?" },
+        },
+      }),
+    ).rejects.toThrow(/state must be a JSON string, object, or array/i);
+
+    await expect(
+      callTool(harness, {
+        state: { value: Number.POSITIVE_INFINITY },
+        questions: {
+          valid: { type: "noul", instructions: "Is this valid?" },
+        },
+      }),
+    ).rejects.toThrow(/state must be a JSON string, object, or array/i);
+
+    await expect(
+      callTool(harness, {
+        state: cyclicState,
+        questions: {
+          valid: { type: "noul", instructions: "Is this valid?" },
+        },
+      }),
+    ).rejects.toThrow(/state must be a JSON string, object, or array/i);
+
+    await expect(
+      callTool(harness, {
+        state,
+        questions: {
+          invalid: { type: "noul", instructions: { value: Number.NaN } },
+        },
+      }),
+    ).rejects.toThrow(/instructions must be a string, object, or array/i);
+
+    await expect(
+      callTool(harness, {
+        state,
+        questions: {
+          invalid: { type: "noul", instructions: cyclicDescription },
+        },
+      }),
+    ).rejects.toThrow(/instructions must be a string, object, or array/i);
+
+    await expect(
+      callTool(harness, {
         state,
         questions: {
           invalid: {
@@ -284,75 +729,56 @@ describe("TypeSafe decide schema and preflight", () => {
     expect(harness.getApiKeyForProvider).not.toHaveBeenCalled();
   });
 
-  it("rejects JSON scalar question fields that TypeSafe does not accept", async () => {
+  it("preserves prototype-sensitive IDs through Pi validation", async () => {
     const harness = createHarness({ typesafeKey: DIRECT_KEY });
-    const { fetchMock } = installFetch([() => jsonResponse(successBody)]);
+    const questions = JSON.parse(
+      `{"__proto__": {"type": "noul", "instructions": "Is the payload hostile?"}, "constructor": {"type": "noul", "instructions": "Is it a constructor?"}, "toString": {"type": "choice", "criteria": {"__proto__": null, "constructor": null, "toString": null}}}`,
+    ) as Record<string, unknown>;
+    const answers = JSON.parse(
+      `{"__proto__": {"type": "noul", "noul": 0.4}, "constructor": {"type": "noul", "noul": 0.5}, "toString": {"type": "choice", "choice": "__proto__", "confidence": 1, "probabilities": {"__proto__": 1, "constructor": 0, "toString": 0}}}`,
+    ) as Record<string, unknown>;
+    const params = { state, questions };
+    expect(rawSchemaAccepts(harness, params)).toBe(true);
+    const { requests } = installFetch([
+      () =>
+        jsonResponse({
+          model: "jev-1.14.0",
+          answers,
+          usage: { input_tokens: 10, output_tokens: 2 },
+        }),
+    ]);
 
-    await expect(
-      callTool(harness, {
-        state,
-        questions: { invalid: { type: "noul", instructions: true } },
-      }),
-    ).rejects.toThrow(/instructions must be a string, object, or array/i);
+    const result = await callValidatedTool(harness, params);
+    const sent = (await requests[0]?.json()) as { questions: Record<string, unknown> };
 
-    await expect(
-      callTool(harness, {
-        state,
-        questions: {
-          invalid: {
-            type: "noul",
-            instructions: "Is this valid?",
-            criteria: { true: null },
-          },
-        },
-      }),
-    ).rejects.toThrow(/noul criterion "true" must be a string, object, or array/i);
+    expect(Object.getOwnPropertyNames(sent.questions).sort()).toEqual([
+      "__proto__",
+      "constructor",
+      "toString",
+    ]);
+    expect(own(sent.questions, "__proto__")).toEqual(own(questions, "__proto__"));
+    const sentChoice = own(sent.questions, "toString") as { criteria: Record<string, unknown> };
+    expect(Object.getOwnPropertyNames(sentChoice.criteria).sort()).toEqual([
+      "__proto__",
+      "constructor",
+      "toString",
+    ]);
 
-    await expect(
-      callTool(harness, {
-        state,
-        questions: {
-          invalid: {
-            type: "score",
-            instructions: "How much?",
-            criteria: ["Low", null],
-          },
-        },
-      }),
-    ).rejects.toThrow(/score level 1 must be a string, object, or array/i);
-
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(harness.getApiKeyForProvider).not.toHaveBeenCalled();
-  });
-
-  it("rejects Score criteria outside 2–10 levels without fetching", async () => {
-    const harness = createHarness({ typesafeKey: DIRECT_KEY });
-    const { fetchMock } = installFetch([() => jsonResponse(successBody)]);
-
-    await expect(
-      callTool(harness, {
-        state,
-        questions: {
-          frustration: { type: "score", instructions: "How frustrated?", criteria: ["Calm"] },
-        },
-      }),
-    ).rejects.toThrow(/between 2 and 10 levels/i);
-
-    await expect(
-      callTool(harness, {
-        state,
-        questions: {
-          frustration: {
-            type: "score",
-            instructions: "How frustrated?",
-            criteria: Array.from({ length: 11 }, (_, i) => `level ${i}`),
-          },
-        },
-      }),
-    ).rejects.toThrow(/between 2 and 10 levels/i);
-
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(harness.getApiKeyForProvider).not.toHaveBeenCalled();
+    expect(Object.getOwnPropertyNames(result.details.answers).sort()).toEqual([
+      "__proto__",
+      "constructor",
+      "toString",
+    ]);
+    expect(own(result.details.answers, "__proto__")).toEqual(own(answers, "__proto__"));
+    const content = JSON.parse(result.content[0]?.text ?? "{}") as {
+      answers: Record<string, unknown>;
+    };
+    expect(Object.getOwnPropertyNames(content.answers).sort()).toEqual([
+      "__proto__",
+      "constructor",
+      "toString",
+    ]);
+    expect(own(content.answers, "__proto__")).toEqual(own(answers, "__proto__"));
   });
 
   it("preserves prototype-sensitive question IDs", async () => {
@@ -424,33 +850,48 @@ describe("TypeSafe decide direct request", () => {
   });
 
   it("serializes structured instructions and criteria descriptions", async () => {
-    const harness = createHarness({ typesafeKey: DIRECT_KEY });
     const structuredQuestions = {
       is_urgent: {
         type: "noul",
-        instructions: { question: "Does this convey urgency?", evidence: ["three days"] },
+        instructions: {
+          question: "Does this convey urgency?",
+          evidence: ["three days"],
+          priority: 3,
+          escalated: false,
+          note: null,
+        },
         criteria: { true: ["Time-sensitive"], false: { meaning: "No urgency" } },
       },
       department: {
         type: "choice",
         instructions: ["Choose the team", { source: "ticket" }],
-        criteria: { billing: null, technical: { meaning: "Bugs and outages" } },
+        criteria: {
+          billing: null,
+          technical: { meaning: "Bugs and outages", severity: 2, confirmed: true },
+        },
       },
       frustration: {
         type: "score",
         instructions: { question: "How frustrated is the customer?" },
-        criteria: [{ label: "Calm" }, ["Frustrated"], { label: "Very angry" }],
+        criteria: [{ label: "Calm", level: 0 }, ["Frustrated"], { label: "Very angry" }],
       },
     } as const;
-    const { requests } = installFetch([() => jsonResponse(successBody)]);
+    expect(rawSchemaAccepts(createHarness(), { state, questions: structuredQuestions })).toBe(true);
 
-    await callTool(harness, { state, questions: structuredQuestions });
+    for (const validated of [false, true]) {
+      const { sent } = await runAccepted(
+        { typesafeKey: DIRECT_KEY },
+        "jev-1.13.0",
+        structuredQuestions,
+        validated,
+      );
 
-    expect(await requests[0]?.json()).toEqual({
-      state,
-      model: "jev-latest",
-      questions: structuredQuestions,
-    });
+      expect(sent).toEqual({
+        state,
+        model: "jev-latest",
+        questions: structuredQuestions,
+      });
+    }
   });
 
   it("returns backend, concrete model, answers, raw usage, and Pi usage", async () => {
@@ -846,5 +1287,333 @@ describe("TypeSafe decide fallback policy", () => {
     expect(error.message).not.toContain(DIRECT_KEY);
     expect(error.message).not.toContain(FALLBACK_KEY);
     expect(error.message).not.toContain("exploded");
+  });
+});
+
+describe("TypeSafe decide gateway question limit", () => {
+  const limitMessage = "at most 100 questions per request; received 101";
+
+  it("allows 101 direct questions", async () => {
+    const directQuestions = noulQuestions(101);
+    const harness = createHarness({ typesafeKey: DIRECT_KEY, commandKey: FALLBACK_KEY });
+    const { requests } = installFetch([
+      () => jsonResponse(responseFor(directQuestions, "jev-1.14.0")),
+    ]);
+
+    const result = await callTool(harness, { state, questions: directQuestions });
+
+    expect(requests.map((request) => request.url)).toEqual([DIRECT_URL]);
+    expect(result.details.backend).toBe("typesafe");
+    expect(harness.getApiKeyForProvider).not.toHaveBeenCalledWith("command-code");
+  });
+
+  it("allows 100 initial gateway questions", async () => {
+    const gatewayQuestions = noulQuestions(100);
+    const harness = createHarness({ typesafeKey: undefined, commandKey: FALLBACK_KEY });
+    const { requests } = installFetch([
+      () => jsonResponse(responseFor(gatewayQuestions, "typesafe/jev")),
+    ]);
+
+    const result = await callTool(harness, { state, questions: gatewayQuestions });
+
+    expect(requests.map((request) => request.url)).toEqual([FALLBACK_URL]);
+    expect(result.details.backend).toBe("command-code");
+  });
+
+  it("allows 100 fallback questions", async () => {
+    const fallbackQuestions = noulQuestions(100);
+    const harness = createHarness({ typesafeKey: DIRECT_KEY, commandKey: FALLBACK_KEY });
+    const { requests } = installFetch([
+      () => new Response("unavailable", { status: 503 }),
+      () => jsonResponse(responseFor(fallbackQuestions, "typesafe/jev")),
+    ]);
+
+    const result = await callTool(harness, { state, questions: fallbackQuestions });
+
+    expect(requests.map((request) => request.url)).toEqual([DIRECT_URL, FALLBACK_URL]);
+    expect(result.details.backend).toBe("command-code");
+  });
+
+  it("rejects 101 initial gateway questions before credentials", async () => {
+    for (const commandKey of [undefined, FALLBACK_KEY]) {
+      const harness = createHarness({ typesafeKey: undefined, commandKey });
+      const { fetchMock } = installFetch([() => jsonResponse(successBody)]);
+
+      const error = (await callTool(harness, {
+        state,
+        questions: noulQuestions(101),
+      }).catch((cause: Error) => cause)) as Error;
+
+      expect(error.message).toContain(limitMessage);
+      expect(error.message).not.toContain(DIRECT_KEY);
+      expect(error.message).not.toContain(FALLBACK_KEY);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(harness.getApiKeyForProvider).not.toHaveBeenCalledWith("command-code");
+    }
+
+    vi.stubEnv("TYPESAFE_API_KEY", "   ");
+    const blankHostHarness = createHarness({ typesafeKey: undefined, commandKey: FALLBACK_KEY });
+    const { fetchMock } = installFetch([() => jsonResponse(successBody)]);
+
+    await expect(
+      callTool(blankHostHarness, { state, questions: noulQuestions(101) }),
+    ).rejects.toThrow(limitMessage);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(blankHostHarness.getApiKeyForProvider).not.toHaveBeenCalledWith("command-code");
+  });
+
+  it.each([
+    [
+      "401",
+      () => new Response(JSON.stringify({ error: "secret-upstream-marker" }), { status: 401 }),
+      /TypeSafe.*401/,
+    ],
+    [
+      "403",
+      () => new Response(JSON.stringify({ error: "secret-upstream-marker" }), { status: 403 }),
+      /TypeSafe.*403/,
+    ],
+    [
+      "429",
+      () => new Response(JSON.stringify({ error: "secret-upstream-marker" }), { status: 429 }),
+      /TypeSafe.*429/,
+    ],
+    [
+      "529",
+      () => new Response(JSON.stringify({ error: "secret-upstream-marker" }), { status: 529 }),
+      /TypeSafe.*529/,
+    ],
+    [
+      "500",
+      () => new Response(JSON.stringify({ error: "secret-upstream-marker" }), { status: 500 }),
+      /TypeSafe.*500/,
+    ],
+    [
+      "503",
+      () => new Response(JSON.stringify({ error: "secret-upstream-marker" }), { status: 503 }),
+      /TypeSafe.*503/,
+    ],
+    [
+      "transport",
+      () => {
+        throw new TypeError("secret-upstream-marker transport failed");
+      },
+      /TypeSafe.*transport/,
+    ],
+    [
+      "malformed",
+      () =>
+        jsonResponse({
+          model: 42,
+          answers: "nope",
+          usage: { input_tokens: "many" },
+          error: "secret-upstream-marker",
+        }),
+      /TypeSafe.*malformed/,
+    ],
+  ])(
+    "retains direct failure when 101 questions prevent fallback: %s",
+    async (_label, handler, expected) => {
+      for (const commandKey of [FALLBACK_KEY, undefined]) {
+        const harness = createHarness({ typesafeKey: DIRECT_KEY, commandKey });
+        const { requests } = installFetch([handler]);
+
+        const error = (await callTool(harness, {
+          state,
+          questions: noulQuestions(101),
+        }).catch((cause: Error) => cause)) as Error;
+
+        expect(requests.map((request) => request.url)).toEqual([DIRECT_URL]);
+        expect(harness.getApiKeyForProvider).not.toHaveBeenCalledWith("command-code");
+        expect(error.message).toMatch(expected);
+        expect(error.message).toContain(limitMessage);
+        expect(error.message).not.toContain(DIRECT_KEY);
+        expect(error.message).not.toContain(FALLBACK_KEY);
+        expect(error.message).not.toContain("secret-upstream-marker");
+      }
+    },
+  );
+
+  it("retains a direct timeout when 101 questions prevent fallback", async () => {
+    const harness = createHarness({ typesafeKey: DIRECT_KEY, commandKey: FALLBACK_KEY });
+    const directTimeout = new AbortController();
+    vi.spyOn(AbortSignal, "timeout").mockReturnValue(directTimeout.signal);
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const { requests } = installFetch([
+      (request) =>
+        new Promise<Response>((_resolve, reject) => {
+          markStarted();
+          request.signal.addEventListener(
+            "abort",
+            () => reject(new Error("secret-upstream-marker timeout")),
+            { once: true },
+          );
+        }),
+    ]);
+
+    const pending = callTool(harness, { state, questions: noulQuestions(101) });
+    await started;
+    directTimeout.abort();
+    const error = (await pending.catch((cause: Error) => cause)) as Error;
+
+    expect(requests.map((request) => request.url)).toEqual([DIRECT_URL]);
+    expect(harness.getApiKeyForProvider).not.toHaveBeenCalledWith("command-code");
+    expect(error.message).toMatch(/TypeSafe.*timeout/);
+    expect(error.message).toContain(limitMessage);
+    expect(error.message).not.toContain("secret-upstream-marker");
+  });
+
+  it("retains a direct body timeout when 101 questions prevent fallback", async () => {
+    const harness = createHarness({ typesafeKey: DIRECT_KEY, commandKey: FALLBACK_KEY });
+    const directTimeout = new AbortController();
+    vi.spyOn(AbortSignal, "timeout").mockReturnValue(directTimeout.signal);
+    let markParsing!: () => void;
+    const parsing = new Promise<void>((resolve) => {
+      markParsing = resolve;
+    });
+    const { requests } = installFetch([
+      (request) =>
+        ({
+          ok: true,
+          status: 200,
+          json: () =>
+            new Promise<unknown>((_resolve, reject) => {
+              markParsing();
+              request.signal.addEventListener(
+                "abort",
+                () => reject(new Error("secret-upstream-marker timeout")),
+                { once: true },
+              );
+            }),
+        }) as Response,
+    ]);
+
+    const pending = callTool(harness, { state, questions: noulQuestions(101) });
+    await parsing;
+    directTimeout.abort();
+    const error = (await pending.catch((cause: Error) => cause)) as Error;
+
+    expect(requests.map((request) => request.url)).toEqual([DIRECT_URL]);
+    expect(harness.getApiKeyForProvider).not.toHaveBeenCalledWith("command-code");
+    expect(error.message).toMatch(/TypeSafe.*timeout/);
+    expect(error.message).toContain(limitMessage);
+    expect(error.message).not.toContain("secret-upstream-marker");
+  });
+
+  it.each([
+    ["400", 400],
+    ["404", 404],
+    ["413", 413],
+    ["415", 415],
+    ["422", 422],
+  ])("keeps oversized terminal direct failures terminal: %s", async (_label, status) => {
+    const harness = createHarness({ typesafeKey: DIRECT_KEY, commandKey: FALLBACK_KEY });
+    const { requests } = installFetch([
+      () => new Response(JSON.stringify({ error: "terminal" }), { status }),
+    ]);
+
+    const error = (await callTool(harness, {
+      state,
+      questions: noulQuestions(101),
+    }).catch((cause: Error) => cause)) as Error;
+
+    expect(requests.map((request) => request.url)).toEqual([DIRECT_URL]);
+    expect(harness.getApiKeyForProvider).not.toHaveBeenCalledWith("command-code");
+    expect(error.message).toMatch(new RegExp(`TypeSafe.*${status}`));
+    expect(error.message).not.toMatch(/100/);
+    expect(error.message).not.toMatch(/at most/);
+  });
+
+  it("cancels oversized calls before the gateway guard", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const harness = createHarness({ typesafeKey: undefined, commandKey: FALLBACK_KEY });
+    const { fetchMock } = installFetch([() => jsonResponse(successBody)]);
+
+    const error = (await callTool(
+      harness,
+      { state, questions: noulQuestions(101) },
+      controller.signal,
+    ).catch((cause: Error) => cause)) as Error;
+
+    expect(error.message).toMatch(/TypeSafe.*cancel/i);
+    expect(error.message).not.toMatch(/100/);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(harness.getApiKeyForProvider).not.toHaveBeenCalled();
+
+    const duringHarness = createHarness({ typesafeKey: DIRECT_KEY, commandKey: FALLBACK_KEY });
+    const duringController = new AbortController();
+    duringHarness.getApiKeyForProvider.mockImplementation(async (provider: string) => {
+      if (provider === "typesafe") {
+        duringController.abort();
+        return DIRECT_KEY;
+      }
+      return FALLBACK_KEY;
+    });
+    const duringFetch = installFetch([() => jsonResponse(successBody)]);
+
+    const duringError = (await callTool(
+      duringHarness,
+      { state, questions: noulQuestions(101) },
+      duringController.signal,
+    ).catch((cause: Error) => cause)) as Error;
+
+    expect(duringError.message).toMatch(/TypeSafe.*cancel/i);
+    expect(duringError.message).not.toMatch(/100/);
+    expect(duringFetch.fetchMock).not.toHaveBeenCalled();
+    expect(duringHarness.getApiKeyForProvider).not.toHaveBeenCalledWith("command-code");
+  });
+
+  it("cancels oversized direct failures before fallback credentials", async () => {
+    const fetchController = new AbortController();
+    const fetchHarness = createHarness({ typesafeKey: DIRECT_KEY, commandKey: FALLBACK_KEY });
+    const { requests } = installFetch([
+      () => {
+        fetchController.abort();
+        return Promise.reject(
+          Object.assign(new Error("The operation was aborted"), { name: "AbortError" }),
+        );
+      },
+    ]);
+
+    const fetchError = (await callTool(
+      fetchHarness,
+      { state, questions: noulQuestions(101) },
+      fetchController.signal,
+    ).catch((cause: Error) => cause)) as Error;
+
+    expect(requests.map((request) => request.url)).toEqual([DIRECT_URL]);
+    expect(fetchHarness.getApiKeyForProvider).not.toHaveBeenCalledWith("command-code");
+    expect(fetchError.message).toMatch(/TypeSafe.*cancel/i);
+    expect(fetchError.message).not.toMatch(/100/);
+
+    const bodyController = new AbortController();
+    const bodyHarness = createHarness({ typesafeKey: DIRECT_KEY, commandKey: FALLBACK_KEY });
+    const bodyFetch = installFetch([
+      () =>
+        ({
+          ok: true,
+          status: 200,
+          json: async () => {
+            bodyController.abort();
+            return responseFor(noulQuestions(101), "jev-1.14.0");
+          },
+        }) as unknown as Response,
+    ]);
+
+    const bodyError = (await callTool(
+      bodyHarness,
+      { state, questions: noulQuestions(101) },
+      bodyController.signal,
+    ).catch((cause: Error) => cause)) as Error;
+
+    expect(bodyFetch.requests.map((request) => request.url)).toEqual([DIRECT_URL]);
+    expect(bodyHarness.getApiKeyForProvider).not.toHaveBeenCalledWith("command-code");
+    expect(bodyError.message).toMatch(/TypeSafe.*cancel/i);
+    expect(bodyError.message).not.toMatch(/100/);
   });
 });

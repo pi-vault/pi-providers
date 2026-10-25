@@ -106,9 +106,11 @@ Cache writes are free for `MiniMax-M3`. They cost $0.375 per 1M tokens for `Mini
 
 `typesafe_decide` is a Pi tool, not a chat model. It takes a JSON `state` plus one or more named questions and returns **structured probabilities**, not generated text:
 
-- **Noul** — a yes/no question with optional `true` / `false` criteria.
-- **Choice** — a question over 2–255 named options, each with an optional rubric.
-- **Score** — a question over 2–10 ordered level descriptions.
+- **Noul** — a yes/no question. `instructions` is optional and may be null. When `instructions` is omitted or null, at least one of `criteria.true` / `criteria.false` must be a non-null description.
+- **Choice** — a question over 1–255 named options, each with a string, object, array, or null rubric description.
+- **Score** — a question over 1–10 ordered level descriptions; Score levels cannot be null.
+
+`instructions` and rubric descriptions accept a string, JSON object, or JSON array, and `instructions` may also be null. Omitted fields stay omitted rather than becoming empty strings, and explicit null stays null. A one-option Choice or one-level Score is valid; a one-level Score answer uses score `0` and probabilities `{ "0": 1 }`.
 
 See the [TypeSafe quick start](https://docs.typesafe.ai/introduction/quickstart) for how to construct questions, and the [TypeSafe API reference](https://docs.typesafe.ai/api) for the full upstream contract. A request using all three question types:
 
@@ -135,7 +137,30 @@ See the [TypeSafe quick start](https://docs.typesafe.ai/introduction/quickstart)
 }
 ```
 
-**Routing.** The tool prefers direct TypeSafe access: with a configured credential it calls `jev-latest` on the TypeSafe System One API. If no direct credential is available, or a direct attempt fails in a retryable way, it may make a single fallback request to `typesafe/jev` through Command Code. Direct `400` / `422` responses mean the request itself is invalid, and a cancelled call is terminal — neither falls back. Credentials are resolved in this order: a host-resolved `typesafe` credential, then a non-blank `TYPESAFE_API_KEY`, then `command-code` fallback auth.
+Add a criteria-only Noul, an explicit-null Noul, a one-option Choice, and a one-level Score:
+
+```json
+{
+  "state": { "ticket": "payouts failing for three days" },
+  "questions": {
+    "ready_to_ship": {
+      "type": "noul",
+      "criteria": { "true": "All release gates pass" }
+    },
+    "blocked": {
+      "type": "noul",
+      "instructions": null,
+      "criteria": { "false": "No blocker", "true": "Blocked" }
+    },
+    "next_step": { "type": "choice", "criteria": { "ship": null } },
+    "risk": { "type": "score", "criteria": ["Low"] }
+  }
+}
+```
+
+**Routing.** The tool prefers direct TypeSafe access: with a configured credential it calls `jev-latest` on the TypeSafe System One API. If no direct credential is available, or a direct attempt fails in a retryable way, it may make a single fallback request to `typesafe/jev` through Command Code. Direct `400` / `404` / `413` / `415` / `422` responses mean the request itself is invalid, and a cancelled call is terminal — none fall back. Direct `401` / `403` / `429` / `529`, other `5xx`, transport failures, timeouts, and malformed success responses are eligible for one backend failover. Credentials are resolved in this order: a host-resolved `typesafe` credential, then a non-blank `TYPESAFE_API_KEY`, then `command-code` fallback auth.
+
+**Question limits.** Direct TypeSafe requests have no fixed local question cap; upstream token budgets remain authoritative, normally 64K tokens across state plus all questions and 32K across state plus any individual question. Command Code System One accepts at most 100 questions per request. Both gateway paths — an initial request with no direct credential and a retryable fallback after a direct failure — enforce that limit before resolving Command Code credentials or sending. A direct request with 101 or more questions can still succeed. If such an oversized direct request fails retryably, the tool reports the sanitized direct failure together with the gateway limit and never splits, truncates, or forwards the batch.
 
 **Billing.** The result reports which backend answered: `backend` is `typesafe` or `command-code`, alongside the concrete response `model`, the `answers`, and token `usage`. Direct calls bill your TypeSafe account. Fallback calls consume the Command Code plan's model-specific credits or your pay-as-you-go credit balance. See the [Command Code Provider API](https://commandcode.ai/docs/provider) and the [GOAT plan](https://commandcode.ai/docs/plans/goat) for current rates — this README intentionally does not copy mutable prices.
 
