@@ -4,55 +4,16 @@ import type {
   Api,
   AssistantMessageEventStream,
   Model,
-  OpenAICompletionsCompat,
   SimpleStreamOptions,
   TranscriptContext,
 } from "@earendil-works/pi-ai";
 import { getApiProvider } from "@earendil-works/pi-ai/compat";
-import type { ExtensionAPI, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { cleanStream } from "./minimax-openai/clean-stream.ts";
 import { hardenToolCalls } from "./minimax-openai/harden-tool-calls.ts";
+import { MINIMAX_MODELS } from "./minimax-openai/models.ts";
 import { normalizeToolResults } from "./minimax-openai/normalize-tool-results.ts";
-
-const compat: OpenAICompletionsCompat = {
-  supportsStore: false,
-  supportsDeveloperRole: false,
-  supportsReasoningEffort: false,
-  maxTokensField: "max_tokens",
-};
-
-const models: ProviderModelConfig[] = [
-  {
-    id: "MiniMax-M3",
-    name: "MiniMax-M3",
-    reasoning: true,
-    input: ["text", "image"],
-    cost: { input: 0.6, output: 2.4, cacheRead: 0.12, cacheWrite: 0 },
-    contextWindow: 1_000_000,
-    maxTokens: 512_000,
-    compat,
-  },
-  {
-    id: "MiniMax-M2.7",
-    name: "MiniMax-M2.7",
-    reasoning: true,
-    input: ["text"],
-    cost: { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0.375 },
-    contextWindow: 204_800,
-    maxTokens: 131_072,
-    compat,
-  },
-  {
-    id: "MiniMax-M2.7-highspeed",
-    name: "MiniMax-M2.7-highspeed",
-    reasoning: true,
-    input: ["text"],
-    cost: { input: 0.6, output: 2.4, cacheRead: 0.06, cacheWrite: 0.375 },
-    contextWindow: 204_800,
-    maxTokens: 131_072,
-    compat,
-  },
-];
+import { prepareThinkingReplay } from "./minimax-openai/prepare-thinking-replay.ts";
 
 function registerMiniMaxVariant(
   pi: ExtensionAPI,
@@ -73,11 +34,11 @@ function registerMiniMaxVariant(
     ): AssistantMessageEventStream {
       const driver = getApiProvider("openai-completions");
       if (!driver) throw new Error("openai-completions api provider not registered");
-      const ctx = normalizeToolResults(context);
+      const ctx = prepareThinkingReplay(normalizeToolResults(context), model);
       const base = driver.streamSimple({ ...model, api: "openai-completions" }, ctx, options);
       return cleanStream(hardenToolCalls(base));
     },
-    models,
+    models: structuredClone([...MINIMAX_MODELS]),
   });
 }
 
