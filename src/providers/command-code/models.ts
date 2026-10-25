@@ -4,6 +4,7 @@ import type {
   Model,
   ModelCost,
   OpenAICompletionsCompat,
+  ThinkingLevelMap,
 } from "@earendil-works/pi-ai";
 import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 
@@ -31,6 +32,16 @@ export const COMMAND_CODE_FALLBACK_MAX_TOKENS = 32_768;
 const OFFICIAL_VISION_FAMILY = /^(?:claude-|gpt-|google\/)/;
 const OFFICIAL_ADAPTIVE_THINKING_FAMILY =
   /^claude-(?:opus-(?:4-[678]|5)|sonnet-(?:4-6|5)|fable-5|mythos-5)(?:-|$)/;
+
+const FLASH_THINKING_LEVEL_MAP = {
+  off: null,
+  minimal: null,
+  low: "low",
+  medium: "medium",
+  high: "high",
+  xhigh: "xhigh",
+  max: "max",
+} satisfies ThinkingLevelMap;
 
 const OPENAI_COMPAT: OpenAICompletionsCompat = {
   supportsStore: false,
@@ -103,19 +114,23 @@ export function modelFromCatalogRecord(record: CommandCodeCatalogRecord): Comman
   if (!usesMessages && !usesCompletions && !usesResponses) {
     throw new Error(`Unsupported Command Code model endpoints: ${record.id}`);
   }
+  const local = COMMAND_CAPABILITIES[record.id as CommandCodeCatalogId];
   const input: ("text" | "image")[] = record.input
     ? [...record.input]
-    : donor
-      ? [...donor.input]
-      : OFFICIAL_VISION_FAMILY.test(record.id)
-        ? ["text", "image"]
-        : ["text"];
+    : local
+      ? [...local.input]
+      : donor
+        ? [...donor.input]
+        : OFFICIAL_VISION_FAMILY.test(record.id)
+          ? ["text", "image"]
+          : ["text"];
+  const reasoning = record.reasoning ?? local?.reasoning ?? donor?.reasoning ?? true;
   const model = {
     id: record.id,
     name: record.name,
     provider: "command-code",
     baseUrl: usesMessages ? COMMAND_CODE_ANTHROPIC_BASE_URL : COMMAND_CODE_BASE_URL,
-    reasoning: record.reasoning ?? donor?.reasoning ?? true,
+    reasoning,
     input,
     cost: record.cost ?? COMMAND_COSTS[record.id as CommandCodeCatalogId] ?? ZERO_COST,
     contextWindow: record.contextWindow,
@@ -141,179 +156,612 @@ export function modelFromCatalogRecord(record: CommandCodeCatalogRecord): Comman
       : anthropic;
   }
 
-  return usesResponses
-    ? { ...model, api: "openai-responses" as const }
-    : { ...model, api: "openai-completions" as const, compat: OPENAI_COMPAT };
+  if (usesResponses) {
+    return { ...model, api: "openai-responses" as const };
+  }
+
+  const flashControls = record.id === "minimax/minimax-m3.1-flash" && reasoning;
+  return {
+    ...model,
+    api: "openai-completions" as const,
+    compat: flashControls ? { ...OPENAI_COMPAT, supportsReasoningEffort: true } : OPENAI_COMPAT,
+    ...(flashControls ? { thinkingLevelMap: FLASH_THINKING_LEVEL_MAP } : {}),
+  };
 }
 
+// Snapshot source: https://api.commandcode.ai/provider/v1/models
+// Captured 2026-10-25 (93 chat-capable records). Endpoints come directly from the response.
 const COMMAND_CODE_CATALOG_SNAPSHOT = [
-  { id: "claude-sonnet-5-5", name: "Claude Sonnet 5.5", contextWindow: 1_000_000 },
-  { id: "claude-sonnet-5", name: "Claude Sonnet 5", contextWindow: 1_000_000 },
-  { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6", contextWindow: 1_000_000 },
-  { id: "claude-fable-5-1", name: "Claude Fable 5.1", contextWindow: 1_000_000 },
-  { id: "claude-fable-5", name: "Claude Fable 5", contextWindow: 1_000_000 },
-  { id: "claude-opus-5-5", name: "Claude Opus 5.5", contextWindow: 1_000_000 },
-  { id: "claude-opus-5", name: "Claude Opus 5", contextWindow: 1_000_000 },
-  { id: "claude-opus-4-8", name: "Claude Opus 4.8", contextWindow: 1_000_000 },
-  { id: "claude-opus-4-7", name: "Claude Opus 4.7", contextWindow: 1_000_000 },
-  { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5", contextWindow: 200_000 },
-  { id: "gpt-6-astra", name: "GPT-6 Astra", contextWindow: 1_050_000 },
-  { id: "gpt-6.1-sol", name: "GPT-6.1 Sol", contextWindow: 1_050_000 },
-  { id: "gpt-6-sol", name: "GPT-6 Sol", contextWindow: 1_050_000 },
-  { id: "gpt-6-luna", name: "GPT-6 Luna", contextWindow: 1_050_000 },
-  { id: "gpt-5.6-sol", name: "GPT-5.6 Sol", contextWindow: 1_050_000 },
-  { id: "gpt-5.6-terra", name: "GPT-5.6 Terra", contextWindow: 1_050_000 },
-  { id: "gpt-5.6-luna", name: "GPT-5.6 Luna", contextWindow: 1_050_000 },
-  { id: "gpt-5.5", name: "GPT-5.5", contextWindow: 400_000 },
-  { id: "gpt-5.4", name: "GPT-5.4", contextWindow: 400_000 },
-  { id: "gpt-5.3-codex", name: "GPT-5.3 Codex", contextWindow: 400_000 },
-  { id: "gpt-5.4-mini", name: "GPT-5.4 Mini", contextWindow: 400_000 },
-  { id: "deepseek/deepseek-v4-pro", name: "DeepSeek V4 Pro (latest)", contextWindow: 1_000_000 },
+  {
+    id: "claude-sonnet-5-5",
+    name: "Claude Sonnet 5.5",
+    contextWindow: 1000000,
+    supportedEndpoints: ["/messages"],
+  },
+  {
+    id: "claude-sonnet-5",
+    name: "Claude Sonnet 5",
+    contextWindow: 1000000,
+    supportedEndpoints: ["/messages"],
+  },
+  {
+    id: "claude-sonnet-4-6",
+    name: "Claude Sonnet 4.6",
+    contextWindow: 1000000,
+    supportedEndpoints: ["/messages"],
+  },
+  {
+    id: "claude-fable-5-1",
+    name: "Claude Fable 5.1",
+    contextWindow: 1000000,
+    supportedEndpoints: ["/messages"],
+  },
+  {
+    id: "claude-fable-5",
+    name: "Claude Fable 5",
+    contextWindow: 1000000,
+    supportedEndpoints: ["/messages"],
+  },
+  {
+    id: "claude-opus-5-5",
+    name: "Claude Opus 5.5",
+    contextWindow: 1000000,
+    supportedEndpoints: ["/messages"],
+  },
+  {
+    id: "claude-opus-5",
+    name: "Claude Opus 5",
+    contextWindow: 1000000,
+    supportedEndpoints: ["/messages"],
+  },
+  {
+    id: "claude-opus-4-8",
+    name: "Claude Opus 4.8",
+    contextWindow: 1000000,
+    supportedEndpoints: ["/messages"],
+  },
+  {
+    id: "claude-opus-4-7",
+    name: "Claude Opus 4.7",
+    contextWindow: 1000000,
+    supportedEndpoints: ["/messages"],
+  },
+  {
+    id: "claude-haiku-5-5",
+    name: "Claude Haiku 5.5",
+    contextWindow: 1000000,
+    supportedEndpoints: ["/messages"],
+  },
+  {
+    id: "claude-haiku-4-5-20251001",
+    name: "Claude Haiku 4.5",
+    contextWindow: 200000,
+    supportedEndpoints: ["/messages"],
+  },
+  {
+    id: "gpt-6-astra",
+    name: "GPT-6 Astra",
+    contextWindow: 1050000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "gpt-6.1-sol",
+    name: "GPT-6.1 Sol",
+    contextWindow: 1050000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "gpt-6-sol",
+    name: "GPT-6 Sol",
+    contextWindow: 1050000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "gpt-6-luna",
+    name: "GPT-6 Luna",
+    contextWindow: 1050000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "gpt-5.6-sol",
+    name: "GPT-5.6 Sol",
+    contextWindow: 1050000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "gpt-5.6-terra",
+    name: "GPT-5.6 Terra",
+    contextWindow: 1050000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "gpt-5.6-luna",
+    name: "GPT-5.6 Luna",
+    contextWindow: 1050000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "gpt-5.5",
+    name: "GPT-5.5",
+    contextWindow: 400000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "gpt-5.4",
+    name: "GPT-5.4",
+    contextWindow: 400000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "gpt-5.3-codex",
+    name: "GPT-5.3 Codex",
+    contextWindow: 400000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "gpt-5.4-mini",
+    name: "GPT-5.4 Mini",
+    contextWindow: 400000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "deepseek/deepseek-v4-pro",
+    name: "DeepSeek V4 Pro (latest)",
+    contextWindow: 1000000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
   {
     id: "deepseek/deepseek-v4-flash",
     name: "DeepSeek V4 Flash (latest)",
-    contextWindow: 1_000_000,
+    contextWindow: 1000000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
   },
   {
     id: "deepseek/deepseek-v4-flash-vision-exp",
     name: "DeepSeek V4 Flash Vision (exp)",
-    contextWindow: 1_000_000,
+    contextWindow: 1000000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
   },
   {
     id: "deepseek/deepseek-v4-flash-fast",
     name: "DeepSeek V4 Flash Fast",
-    contextWindow: 1_000_000,
+    contextWindow: 1000000,
+    supportedEndpoints: ["/chat/completions"],
   },
   {
     id: "deepseek/deepseek-v4.1-flash",
-    name: "DeepSeek V4.1 Flash",
-    contextWindow: 1_000_000,
+    name: "DeepSeek V4.1 Flash (latest)",
+    contextWindow: 1000000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
   },
   {
     id: "deepseek/deepseek-v4.1-flash-fast",
-    name: "DeepSeek V4.1 Flash Fast",
-    contextWindow: 1_000_000,
+    name: "DeepSeek V4.1 Flash Fast (latest)",
+    contextWindow: 1000000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
   },
-  { id: "moonshotai/Kimi-K3", name: "Kimi K3", contextWindow: 1_000_000 },
-  { id: "moonshotai/Kimi-K2.7-Code", name: "Kimi K2.7 Code", contextWindow: 256_000 },
+  {
+    id: "moonshotai/Kimi-K3.1-Pro",
+    name: "Kimi K3.1 Pro",
+    contextWindow: 1048576,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "moonshotai/Kimi-K3",
+    name: "Kimi K3",
+    contextWindow: 1000000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "moonshotai/Kimi-K2.7-Code",
+    name: "Kimi K2.7 Code",
+    contextWindow: 256000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
   {
     id: "moonshotai/Kimi-K2.7-Code-Highspeed",
     name: "Kimi K2.7 Code HighSpeed",
-    contextWindow: 262_000,
+    contextWindow: 262000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
   },
-  { id: "moonshotai/Kimi-K2.6", name: "Kimi K2.6", contextWindow: 256_000 },
-  { id: "moonshotai/Kimi-K2.5", name: "Kimi K2.5", contextWindow: 256_000 },
-  { id: "zai-org/GLM-5.2", name: "GLM-5.2", contextWindow: 1_000_000 },
-  { id: "zai-org/GLM-5.2-Fast", name: "GLM-5.2 Fast", contextWindow: 1_000_000 },
-  { id: "zai-org/GLM-5.1", name: "GLM-5.1", contextWindow: 200_000 },
-  { id: "zai-org/GLM-5", name: "GLM-5", contextWindow: 200_000 },
-  { id: "z-ai/glm-5.3-flash", name: "GLM-5.3 Flash", contextWindow: 1_048_576 },
-  { id: "z-ai/glm-5.3-flashx", name: "GLM-5.3 FlashX", contextWindow: 1_000_000 },
-  { id: "zai-org/GLM-5.3", name: "GLM-5.3", contextWindow: 1_000_000 },
-  { id: "MiniMaxAI/MiniMax-M3", name: "MiniMax M3", contextWindow: 1_000_000 },
-  { id: "MiniMaxAI/MiniMax-M2.7", name: "MiniMax M2.7", contextWindow: 200_000 },
-  { id: "MiniMaxAI/MiniMax-M2.5", name: "MiniMax M2.5", contextWindow: 200_000 },
-  { id: "xiaomi/mimo-v2.6-pro", name: "MiMo V2.6 Pro", contextWindow: 1_048_576 },
+  {
+    id: "moonshotai/Kimi-K2.6",
+    name: "Kimi K2.6",
+    contextWindow: 256000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "moonshotai/Kimi-K2.5",
+    name: "Kimi K2.5",
+    contextWindow: 256000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "z-ai/glm-5.3-flash",
+    name: "GLM-5.3 Flash",
+    contextWindow: 1048576,
+    supportedEndpoints: ["/chat/completions"],
+  },
+  {
+    id: "z-ai/glm-5.3-flashx",
+    name: "GLM-5.3 FlashX",
+    contextWindow: 1000000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "zai-org/GLM-5.3",
+    name: "GLM-5.3",
+    contextWindow: 1000000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "zai-org/GLM-5.2",
+    name: "GLM-5.2",
+    contextWindow: 1000000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "zai-org/GLM-5.2-Fast",
+    name: "GLM-5.2 Fast",
+    contextWindow: 1000000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "zai-org/GLM-5.1",
+    name: "GLM-5.1",
+    contextWindow: 200000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "zai-org/GLM-5",
+    name: "GLM-5",
+    contextWindow: 200000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "minimax/minimax-m3.1-flash",
+    name: "MiniMax M3.1 Flash",
+    contextWindow: 1000000,
+    supportedEndpoints: ["/chat/completions"],
+  },
+  {
+    id: "MiniMaxAI/MiniMax-M3",
+    name: "MiniMax M3",
+    contextWindow: 1000000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "MiniMaxAI/MiniMax-M2.7",
+    name: "MiniMax M2.7",
+    contextWindow: 200000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "MiniMaxAI/MiniMax-M2.5",
+    name: "MiniMax M2.5",
+    contextWindow: 200000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "ornith/ornith-1.5-122b",
+    name: "Ornith 1.5 122B",
+    contextWindow: 262144,
+    supportedEndpoints: ["/chat/completions"],
+  },
+  {
+    id: "xiaomi/mimo-v2.6-pro",
+    name: "MiMo V2.6 Pro",
+    contextWindow: 1048576,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
   {
     id: "xiaomi/mimo-v2.6-pro-ultraspeed",
     name: "MiMo V2.6 Pro UltraSpeed",
-    contextWindow: 1_048_576,
+    contextWindow: 1048576,
+    supportedEndpoints: ["/chat/completions", "/responses"],
   },
-  { id: "xiaomi/mimo-v2.6-flash", name: "MiMo V2.6 Flash", contextWindow: 1_048_576 },
-  { id: "xiaomi/mimo-v2.5-pro", name: "MiMo V2.5 Pro", contextWindow: 1_000_000 },
-  { id: "xiaomi/mimo-v2.5", name: "MiMo V2.5", contextWindow: 1_000_000 },
-  { id: "Qwen/Qwen3.8-Omni-Flash", name: "Qwen 3.8 Omni Flash", contextWindow: 1_000_000 },
-  { id: "Qwen/Qwen3.8-Max-0902", name: "Qwen 3.8 Max 0902", contextWindow: 1_000_000 },
-  { id: "Qwen/Qwen3.8-Max", name: "Qwen 3.8 Max", contextWindow: 1_000_000 },
-  { id: "Qwen/Qwen3.8-27B", name: "Qwen 3.8 27B", contextWindow: 262_144 },
-  { id: "Qwen/Qwen3.8-Flash", name: "Qwen 3.8 Flash", contextWindow: 1_000_000 },
-  { id: "Qwen/Qwen3.7-Max", name: "Qwen 3.7 Max", contextWindow: 1_000_000 },
-  { id: "Qwen/Qwen3.7-Plus", name: "Qwen 3.7 Plus", contextWindow: 1_000_000 },
-  { id: "Qwen/Qwen3.7-Flash", name: "Qwen 3.7 Flash", contextWindow: 1_000_000 },
-  { id: "Qwen/Qwen3.6-Max-Preview", name: "Qwen 3.6 Max Preview", contextWindow: 200_000 },
-  { id: "Qwen/Qwen3.6-Plus", name: "Qwen 3.6 Plus", contextWindow: 200_000 },
-  { id: "meituan/LongCat-2.0", name: "LongCat 2.0", contextWindow: 1_048_576 },
-  { id: "stepfun/Step-5-Preview", name: "Step 5 Preview", contextWindow: 1_000_000 },
-  { id: "stepfun/Step-3.7-Flash", name: "Step 3.7 Flash", contextWindow: 256_000 },
-  { id: "stepfun/Step-3.5-Flash", name: "Step 3.5 Flash", contextWindow: 262_144 },
-  { id: "tencent/hy3-paid", name: "Tencent Hy3", contextWindow: 262_144 },
-  { id: "tencent/hy4-preview", name: "Tencent Hy4 Preview", contextWindow: 1_048_576 },
-  { id: "google/gemini-3.6-flash", name: "Gemini 3.6 Flash", contextWindow: 1_000_000 },
-  { id: "google/gemini-3.8-flash", name: "Gemini 3.8 Flash", contextWindow: 1_000_000 },
-  { id: "google/gemini-3.7-flash", name: "Gemini 3.7 Flash", contextWindow: 1_048_576 },
-  { id: "google/gemini-3.5-flash", name: "Gemini 3.5 Flash", contextWindow: 1_000_000 },
-  { id: "google/gemini-3.5-flash-lite", name: "Gemini 3.5 Flash Lite", contextWindow: 1_000_000 },
-  { id: "google/gemini-3.1-flash-lite", name: "Gemini 3.1 Flash Lite", contextWindow: 1_000_000 },
-  { id: "sakana/fugu-ultra", name: "Fugu Ultra", contextWindow: 1_000_000 },
-  { id: "nvidia/nemotron-3-ultra-550b-a55b", name: "Nemotron 3 Ultra", contextWindow: 1_000_000 },
-  { id: "thinkingmachines/inkling", name: "Inkling", contextWindow: 256_000 },
-  { id: "thinkingmachines/inkling-small", name: "Inkling Small", contextWindow: 1_000_000 },
-  { id: "stealth/space-bunny-alpha", name: "Space Bunny Alpha", contextWindow: 1_000_000 },
-  { id: "stealth/pixel-canary", name: "Pixel Canary", contextWindow: 262_144 },
-  { id: "poolside/laguna-s-2.1-free", name: "Laguna S 2.1", contextWindow: 256_000 },
   {
-    id: "inclusionai/ling-3.0-flash-sante:free",
-    name: "Ling 3.0 Flash Sante",
-    contextWindow: 262_144,
+    id: "xiaomi/mimo-v2.6-flash",
+    name: "MiMo V2.6 Flash",
+    contextWindow: 1048576,
+    supportedEndpoints: ["/chat/completions", "/responses"],
   },
-  { id: "inclusionai/ling-3.1-flash:free", name: "Ling 3.1 Flash", contextWindow: 262_144 },
-  { id: "meta/muse-spark-1.1", name: "Muse Spark 1.1", contextWindow: 1_048_576 },
-  { id: "meta/muse-spark-1.2", name: "Muse Spark 1.2", contextWindow: 1_048_576 },
+  {
+    id: "Qwen/Qwen3.8-Omni-Flash",
+    name: "Qwen 3.8 Omni Flash",
+    contextWindow: 1000000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "Qwen/Qwen3.8-Max-Prime",
+    name: "Qwen 3.8 Max Prime",
+    contextWindow: 1000000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "Qwen/Qwen3.8-Max-0902",
+    name: "Qwen 3.8 Max 0902",
+    contextWindow: 1000000,
+    supportedEndpoints: ["/chat/completions"],
+  },
+  {
+    id: "Qwen/Qwen3.8-Max",
+    name: "Qwen 3.8 Max",
+    contextWindow: 1000000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "Qwen/Qwen3.8-27B",
+    name: "Qwen 3.8 27B",
+    contextWindow: 262144,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "Qwen/Qwen3.8-Flash",
+    name: "Qwen 3.8 Flash",
+    contextWindow: 1000000,
+    supportedEndpoints: ["/chat/completions"],
+  },
+  {
+    id: "Qwen/Qwen3.7-Max",
+    name: "Qwen 3.7 Max",
+    contextWindow: 1000000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "Qwen/Qwen3.7-Plus",
+    name: "Qwen 3.7 Plus",
+    contextWindow: 1000000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "Qwen/Qwen3.7-Flash",
+    name: "Qwen 3.7 Flash",
+    contextWindow: 1000000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "Qwen/Qwen3.6-Max-Preview",
+    name: "Qwen 3.6 Max Preview",
+    contextWindow: 200000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "Qwen/Qwen3.6-Plus",
+    name: "Qwen 3.6 Plus",
+    contextWindow: 200000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "meituan/LongCat-2.0",
+    name: "LongCat 2.0",
+    contextWindow: 1048576,
+    supportedEndpoints: ["/chat/completions"],
+  },
+  {
+    id: "stepfun/Step-5-Preview",
+    name: "Step 5 Preview",
+    contextWindow: 1000000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "stepfun/Step-3.7-Flash",
+    name: "Step 3.7 Flash",
+    contextWindow: 256000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "stepfun/Step-3.5-Flash",
+    name: "Step 3.5 Flash",
+    contextWindow: 262144,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "tencent/hy3-paid",
+    name: "Tencent Hy3",
+    contextWindow: 262144,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "tencent/hy4-preview",
+    name: "Tencent Hy4 Preview",
+    contextWindow: 1048576,
+    supportedEndpoints: ["/chat/completions"],
+  },
+  {
+    id: "google/gemini-4-argon",
+    name: "Gemini 4 Argon",
+    contextWindow: 1000000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "google/gemini-3.8-flash",
+    name: "Gemini 3.8 Flash",
+    contextWindow: 1000000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "google/gemini-3.7-flash",
+    name: "Gemini 3.7 Flash",
+    contextWindow: 1048576,
+    supportedEndpoints: ["/chat/completions"],
+  },
+  {
+    id: "google/gemini-3.6-flash",
+    name: "Gemini 3.6 Flash",
+    contextWindow: 1000000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "google/gemini-3.5-flash",
+    name: "Gemini 3.5 Flash",
+    contextWindow: 1000000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "google/gemini-3.5-flash-lite",
+    name: "Gemini 3.5 Flash Lite",
+    contextWindow: 1000000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "google/gemini-3.1-flash-lite",
+    name: "Gemini 3.1 Flash Lite",
+    contextWindow: 1000000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "sakana/fugu-ultra",
+    name: "Fugu Ultra",
+    contextWindow: 1000000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "nvidia/nemotron-3-ultra-550b-a55b",
+    name: "Nemotron 3 Ultra",
+    contextWindow: 1000000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "nvidia/nemotron-3.5-super-vl",
+    name: "Nemotron 3.5 Super VL",
+    contextWindow: 262144,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "thinkingmachines/inkling",
+    name: "Inkling",
+    contextWindow: 256000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "thinkingmachines/inkling-small",
+    name: "Inkling Small",
+    contextWindow: 1000000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "stealth/glyph-cluster:free",
+    name: "Glyph Cluster",
+    contextWindow: 256000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "reflection/beam:free",
+    name: "Beam 1.0",
+    contextWindow: 1048576,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "poolside/laguna-s-2.1-free",
+    name: "Laguna S 2.1",
+    contextWindow: 256000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "inclusionai/ling-3.1-flash",
+    name: "Ling 3.1 Flash",
+    contextWindow: 262144,
+    supportedEndpoints: ["/chat/completions"],
+  },
+  {
+    id: "meta/muse-spark-1.1",
+    name: "Muse Spark 1.1",
+    contextWindow: 1048576,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "meta/muse-spark-1.2",
+    name: "Muse Spark 1.2",
+    contextWindow: 1048576,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
   {
     id: "meta/muse-spark-1.2-contributor",
     name: "Muse Spark 1.2 Contributor",
-    contextWindow: 1_048_576,
+    contextWindow: 1048576,
+    supportedEndpoints: ["/chat/completions", "/responses"],
   },
-  { id: "meta/muse-spark-1.3", name: "Muse Spark 1.3", contextWindow: 1_048_576 },
+  {
+    id: "meta/muse-spark-1.3",
+    name: "Muse Spark 1.3",
+    contextWindow: 1048576,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
   {
     id: "meta/muse-spark-1.3-contributor",
     name: "Muse Spark 1.3 Contributor",
-    contextWindow: 1_048_576,
+    contextWindow: 1048576,
+    supportedEndpoints: ["/chat/completions", "/responses"],
   },
-  { id: "xai/grok-4.5", name: "Grok 4.5", contextWindow: 500_000 },
-  { id: "xai/grok-4.6", name: "Grok 4.6", contextWindow: 500_000 },
-  { id: "xai/grok-4.7", name: "Grok 4.7", contextWindow: 500_000 },
-] as const;
-
-const MESSAGES_MODEL_IDS = new Set([
-  "claude-sonnet-5-5",
-  "claude-sonnet-5",
-  "claude-sonnet-4-6",
-  "claude-fable-5-1",
-  "claude-fable-5",
-  "claude-opus-5-5",
-  "claude-opus-5",
-  "claude-opus-4-8",
-  "claude-opus-4-7",
-  "claude-haiku-4-5-20251001",
-]);
-const CHAT_ONLY_MODEL_IDS = new Set([
-  "deepseek/deepseek-v4-flash-fast",
-  "Qwen/Qwen3.8-Max-0902",
-  "Qwen/Qwen3.8-Flash",
-  "meituan/LongCat-2.0",
-  "tencent/hy4-preview",
-  "google/gemini-3.7-flash",
-  "stealth/space-bunny-alpha",
-  "inclusionai/ling-3.0-flash-sante:free",
-]);
+  {
+    id: "meta/muse-spark-open",
+    name: "Muse Spark Open",
+    contextWindow: 1048576,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "meta/muse-wonder-1.0",
+    name: "Muse Wonder",
+    contextWindow: 1048576,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "xai/grok-4.5",
+    name: "Grok 4.5",
+    contextWindow: 500000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "xai/grok-4.6",
+    name: "Grok 4.6",
+    contextWindow: 500000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "xai/grok-4.7",
+    name: "Grok 4.7",
+    contextWindow: 500000,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+  {
+    id: "mistral/mistral-large-4",
+    name: "Mistral Large 4",
+    contextWindow: 524288,
+    supportedEndpoints: ["/chat/completions", "/responses"],
+  },
+] as const satisfies readonly CommandCodeCatalogRecord[];
 
 export const COMMAND_CODE_CATALOG: readonly CommandCodeCatalogRecord[] =
-  COMMAND_CODE_CATALOG_SNAPSHOT.map((record) => ({
-    ...record,
-    supportedEndpoints: MESSAGES_MODEL_IDS.has(record.id)
-      ? ["/messages"]
-      : CHAT_ONLY_MODEL_IDS.has(record.id)
-        ? ["/chat/completions"]
-        : ["/chat/completions", "/responses"],
-  }));
+  COMMAND_CODE_CATALOG_SNAPSHOT;
 
 type CommandCodeCatalogId = (typeof COMMAND_CODE_CATALOG_SNAPSHOT)[number]["id"];
 
-// Snapshot source: https://commandcode.ai/docs/resources/pricing-limits
-// Effective rates captured 2026-09-30, USD per 1M tokens.
+// Capabilities source: https://commandcode.ai/docs/plans/goat embedded model data, checked
+// against each model page and https://commandcode.ai/docs/resources/pricing-limits on 2026-10-25.
+const COMMAND_CAPABILITIES: Readonly<
+  Partial<Record<CommandCodeCatalogId, { input: ("text" | "image")[]; reasoning: boolean }>>
+> = {
+  "claude-haiku-5-5": { input: ["text", "image"], reasoning: true },
+  "moonshotai/Kimi-K3.1-Pro": { input: ["text", "image"], reasoning: true },
+  "minimax/minimax-m3.1-flash": { input: ["text", "image"], reasoning: true },
+  "ornith/ornith-1.5-122b": { input: ["text", "image"], reasoning: true },
+  "Qwen/Qwen3.8-Max-Prime": { input: ["text", "image"], reasoning: true },
+  "google/gemini-4-argon": { input: ["text", "image"], reasoning: true },
+  "nvidia/nemotron-3.5-super-vl": { input: ["text", "image"], reasoning: true },
+  "stealth/glyph-cluster:free": { input: ["text"], reasoning: true },
+  "reflection/beam:free": { input: ["text"], reasoning: true },
+  "inclusionai/ling-3.1-flash": { input: ["text"], reasoning: true },
+  "meta/muse-spark-open": { input: ["text", "image"], reasoning: true },
+  "meta/muse-wonder-1.0": { input: ["text", "image"], reasoning: true },
+  "mistral/mistral-large-4": { input: ["text", "image"], reasoning: true },
+};
+
+// Pricing sources: https://commandcode.ai/docs/resources/pricing-limits and the
+// https://commandcode.ai/docs/plans/goat embedded model data, captured 2026-10-25.
+// USD per 1M tokens.
 const COMMAND_COSTS: Readonly<Partial<Record<CommandCodeCatalogId, ModelCost>>> = {
-  "claude-sonnet-5-5": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+  "claude-sonnet-5-5": { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
   "claude-sonnet-5": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
   "claude-sonnet-4-6": { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
   "claude-fable-5-1": { input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5 },
@@ -323,6 +771,33 @@ const COMMAND_COSTS: Readonly<Partial<Record<CommandCodeCatalogId, ModelCost>>> 
   "claude-opus-4-8": { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
   "claude-opus-4-7": { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
   "claude-haiku-4-5-20251001": { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },
+  // 2026-10-25 catalog additions.
+  "claude-haiku-5-5": {
+    input: 0.1,
+    output: 0.5,
+    cacheRead: 0.01,
+    cacheWrite: 0.125,
+    tiers: [
+      { inputTokensAbove: 100_000, input: 0.5, output: 2.5, cacheRead: 0.05, cacheWrite: 0.625 },
+    ],
+  },
+  "moonshotai/Kimi-K3.1-Pro": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 0 },
+  "minimax/minimax-m3.1-flash": {
+    input: 0.15,
+    output: 0.6,
+    cacheRead: 0.015,
+    cacheWrite: 0,
+  },
+  "ornith/ornith-1.5-122b": { input: 0.16, output: 0.64, cacheRead: 0.02, cacheWrite: 0 },
+  "Qwen/Qwen3.8-Max-Prime": { input: 4, output: 12, cacheRead: 0.5, cacheWrite: 5 },
+  "google/gemini-4-argon": { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 0 },
+  "nvidia/nemotron-3.5-super-vl": { input: 0.2, output: 0.5, cacheRead: 0.04, cacheWrite: 0 },
+  "stealth/glyph-cluster:free": ZERO_COST,
+  "reflection/beam:free": ZERO_COST,
+  "inclusionai/ling-3.1-flash": { input: 0.3, output: 0.9, cacheRead: 0.06, cacheWrite: 0 },
+  "meta/muse-spark-open": { input: 1.25, output: 4.25, cacheRead: 0.15, cacheWrite: 0 },
+  "meta/muse-wonder-1.0": { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 0 },
+  "mistral/mistral-large-4": { input: 1.36, output: 4.18, cacheRead: 0.14, cacheWrite: 0 },
   "gpt-6-astra": {
     input: 10,
     output: 50,
@@ -422,8 +897,6 @@ const COMMAND_COSTS: Readonly<Partial<Record<CommandCodeCatalogId, ModelCost>>> 
     cacheWrite: 0,
   },
   "xiaomi/mimo-v2.6-flash": { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0 },
-  "xiaomi/mimo-v2.5-pro": { input: 0.435, output: 0.87, cacheRead: 0.0036, cacheWrite: 0 },
-  "xiaomi/mimo-v2.5": { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0 },
   "Qwen/Qwen3.8-Omni-Flash": { input: 0.15, output: 0.47, cacheRead: 0.016, cacheWrite: 0 },
   "Qwen/Qwen3.8-Max-0902": { input: 2, output: 6, cacheRead: 0.25, cacheWrite: 0 },
   "Qwen/Qwen3.8-Max": { input: 2, output: 6, cacheRead: 0.25, cacheWrite: 2.5 },
@@ -467,10 +940,6 @@ const COMMAND_COSTS: Readonly<Partial<Record<CommandCodeCatalogId, ModelCost>>> 
   "nvidia/nemotron-3-ultra-550b-a55b": { input: 0.6, output: 2.4, cacheRead: 0.12, cacheWrite: 0 },
   "thinkingmachines/inkling": { input: 1, output: 4.05, cacheRead: 0.17, cacheWrite: 0 },
   "thinkingmachines/inkling-small": { input: 0.5, output: 1.2, cacheRead: 0.1, cacheWrite: 0 },
-  "stealth/space-bunny-alpha": ZERO_COST,
-  "stealth/pixel-canary": ZERO_COST,
-  "inclusionai/ling-3.0-flash-sante:free": ZERO_COST,
-  "inclusionai/ling-3.1-flash:free": ZERO_COST,
   "meta/muse-spark-1.1": { input: 1.25, output: 4.25, cacheRead: 0.15, cacheWrite: 0 },
   "meta/muse-spark-1.2": { input: 1.25, output: 4.25, cacheRead: 0.15, cacheWrite: 0 },
   "meta/muse-spark-1.2-contributor": { input: 0.1, output: 0.2, cacheRead: 0.002, cacheWrite: 0 },
