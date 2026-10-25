@@ -9,28 +9,29 @@ const FALLBACK_ENDPOINT = "https://api.commandcode.ai/provider/v1/systemone";
 const FALLBACK_MODEL = "typesafe/jev";
 const REQUEST_TIMEOUT_MS = 10_000;
 
-const MIN_CHOICE_OPTIONS = 2;
+const MIN_CHOICE_OPTIONS = 1;
 const MAX_CHOICE_OPTIONS = 255;
-const MIN_SCORE_LEVELS = 2;
+const MIN_SCORE_LEVELS = 1;
 const MAX_SCORE_LEVELS = 10;
+const MAX_GATEWAY_QUESTIONS = 100;
 const PROBABILITY_TOLERANCE = 1e-6;
 
 interface NoulQuestion {
   type: "noul";
-  instructions: unknown;
-  criteria?: { true?: unknown; false?: unknown };
+  instructions?: QuestionValue | null;
+  criteria?: { true?: QuestionValue | null; false?: QuestionValue | null } | null;
 }
 
 interface ChoiceQuestion {
   type: "choice";
-  instructions: unknown;
-  criteria: Record<string, unknown>;
+  instructions?: QuestionValue | null;
+  criteria: Record<string, QuestionValue | null>;
 }
 
 interface ScoreQuestion {
   type: "score";
-  instructions: unknown;
-  criteria: unknown[];
+  instructions?: QuestionValue | null;
+  criteria: QuestionValue[];
 }
 
 type Question = NoulQuestion | ChoiceQuestion | ScoreQuestion;
@@ -38,44 +39,76 @@ type QuestionMap = Record<string, Question>;
 
 /** A structured JSON value TypeSafe accepts for instructions and rubric descriptions. */
 type QuestionValue = string | object | unknown[];
-type ChoiceRubricValue = QuestionValue | null;
+type NullableQuestionValue = QuestionValue | null;
 
 const questionValueSchema = Type.Union([
   Type.String(),
   Type.Object({}, { additionalProperties: Type.Unknown() }),
   Type.Array(Type.Unknown()),
 ]);
-const choiceRubricValueSchema = Type.Union([questionValueSchema, Type.Null()]);
+const nullableQuestionValueSchema = Type.Union([questionValueSchema, Type.Null()]);
+
+const noulCriteriaSchema = Type.Union([
+  Type.Object(
+    {
+      true: Type.Optional(nullableQuestionValueSchema),
+      false: Type.Optional(nullableQuestionValueSchema),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Null(),
+]);
+
+function nonNullNoulOutcomeCondition(outcome: "true" | "false") {
+  return Type.Object(
+    {
+      criteria: Type.Object(
+        { [outcome]: Type.Unsafe<unknown>({ not: { type: "null" } }) },
+        { required: [outcome] },
+      ),
+    },
+    { required: ["criteria"] },
+  );
+}
+
+const noulSchema = Type.Object(
+  {
+    type: Type.Literal("noul"),
+    instructions: Type.Optional(nullableQuestionValueSchema),
+    criteria: Type.Optional(noulCriteriaSchema),
+  },
+  {
+    anyOf: [
+      Type.Object(
+        { instructions: Type.Unsafe<unknown>({ not: { type: "null" } }) },
+        { required: ["instructions"] },
+      ),
+      nonNullNoulOutcomeCondition("true"),
+      nonNullNoulOutcomeCondition("false"),
+    ],
+  },
+);
 
 const questionSchema = Type.Union([
-  Type.Object({
-    type: Type.Literal("noul"),
-    instructions: questionValueSchema,
-    criteria: Type.Optional(
-      Type.Object({
-        true: Type.Optional(questionValueSchema),
-        false: Type.Optional(questionValueSchema),
-      }),
-    ),
-  }),
+  noulSchema,
   Type.Object({
     type: Type.Literal("choice"),
-    instructions: questionValueSchema,
-    criteria: Type.Unsafe<Record<string, ChoiceRubricValue>>(
+    instructions: Type.Optional(nullableQuestionValueSchema),
+    criteria: Type.Unsafe<Record<string, NullableQuestionValue>>(
       Type.Object(
         {},
         {
           minProperties: MIN_CHOICE_OPTIONS,
           maxProperties: MAX_CHOICE_OPTIONS,
-          additionalProperties: choiceRubricValueSchema,
+          additionalProperties: nullableQuestionValueSchema,
         },
       ),
     ),
   }),
   Type.Object({
     type: Type.Literal("score"),
-    instructions: questionValueSchema,
-    criteria: Type.Unsafe<unknown[]>(
+    instructions: Type.Optional(nullableQuestionValueSchema),
+    criteria: Type.Unsafe<QuestionValue[]>(
       Type.Array(questionValueSchema, {
         minItems: MIN_SCORE_LEVELS,
         maxItems: MAX_SCORE_LEVELS,
@@ -164,7 +197,7 @@ function isQuestionValue(value: unknown): value is QuestionValue {
   );
 }
 
-function isChoiceRubricValue(value: unknown): value is ChoiceRubricValue {
+function isNullableQuestionValue(value: unknown): value is NullableQuestionValue {
   return value === null || isQuestionValue(value);
 }
 
@@ -177,35 +210,66 @@ function validateQuestion(id: string, raw: unknown): Question {
   if (type !== "noul" && type !== "choice" && type !== "score") {
     throw new Error(`Question "${id}" must declare type "noul", "choice", or "score"`);
   }
-  if (!Object.hasOwn(raw, "instructions")) {
-    throw new Error(`Question "${id}" must provide "instructions"`);
-  }
-  const instructions = raw.instructions;
-  if (!isQuestionValue(instructions)) {
-    throw new Error(`Question "${id}" instructions must be a string, object, or array`);
+
+  const hasInstructions = Object.hasOwn(raw, "instructions");
+  let instructions: NullableQuestionValue | undefined;
+  if (hasInstructions) {
+    if (!isNullableQuestionValue(raw.instructions)) {
+      throw new Error(`Question "${id}" instructions must be a string, object, or array or null`);
+    }
+    instructions = raw.instructions;
   }
 
   if (type === "noul") {
-    if (!Object.hasOwn(raw, "criteria")) return { type, instructions };
-    if (!isPlainObject(raw.criteria)) {
+    const hasCriteria = Object.hasOwn(raw, "criteria");
+    let criteria: NoulQuestion["criteria"] | undefined;
+    if (hasCriteria) {
+      const rawCriteria = raw.criteria;
+      if (rawCriteria === null) {
+        criteria = null;
+      } else if (!isPlainObject(rawCriteria)) {
+        throw new Error(
+          `Question "${id}" noul criteria must be null or an object with "true" and/or "false"`,
+        );
+      } else {
+        criteria = ownKeyRecord(rawCriteria, (key) => {
+          if (key !== "true" && key !== "false") {
+            throw new Error(
+              `Question "${id}" noul criteria may only describe "true" and/or "false"`,
+            );
+          }
+          const value = rawCriteria[key];
+          if (!isNullableQuestionValue(value)) {
+            throw new Error(
+              `Question "${id}" noul criterion "${key}" must be a string, object, or array or null`,
+            );
+          }
+          return value;
+        });
+      }
+    }
+
+    const hasNonNullInstructions =
+      hasInstructions && instructions !== undefined && instructions !== null;
+    const hasNonNullOutcome =
+      criteria !== undefined &&
+      criteria !== null &&
+      (["true", "false"] as const).some(
+        (outcome) =>
+          Object.hasOwn(criteria, outcome) &&
+          criteria[outcome] !== undefined &&
+          criteria[outcome] !== null,
+      );
+    if (!hasNonNullInstructions && !hasNonNullOutcome) {
       throw new Error(
-        `Question "${id}" noul criteria must be an object with "true" and/or "false"`,
+        `Question "${id}" noul needs non-null "instructions" or a non-null "true" or "false" criterion`,
       );
     }
-    const criteria: NoulQuestion["criteria"] = {};
-    for (const key of Object.getOwnPropertyNames(raw.criteria)) {
-      if (key !== "true" && key !== "false") {
-        throw new Error(`Question "${id}" noul criteria may only describe "true" and/or "false"`);
-      }
-      const value = raw.criteria[key];
-      if (!isQuestionValue(value)) {
-        throw new Error(
-          `Question "${id}" noul criterion "${key}" must be a string, object, or array`,
-        );
-      }
-      criteria[key] = value;
-    }
-    return { type, instructions, criteria };
+
+    const question: NoulQuestion = { type };
+    if (hasInstructions) question.instructions = instructions;
+    if (hasCriteria) question.criteria = criteria;
+    return question;
   }
 
   if (type === "choice") {
@@ -223,12 +287,14 @@ function validateQuestion(id: string, raw: unknown): Question {
     const optionsByKey = raw.criteria;
     const criteria = ownKeyRecord(optionsByKey, (option) => {
       const value = optionsByKey[option];
-      if (!isChoiceRubricValue(value)) {
+      if (!isNullableQuestionValue(value)) {
         throw new Error(`Question "${id}" option "${option}" must describe the option`);
       }
       return value;
     });
-    return { type, instructions, criteria };
+    const question: ChoiceQuestion = { type, criteria };
+    if (hasInstructions) question.instructions = instructions;
+    return question;
   }
 
   if (!Array.isArray(raw.criteria)) {
@@ -246,7 +312,9 @@ function validateQuestion(id: string, raw: unknown): Question {
       throw new Error(`Question "${id}" score level ${index} must be a string, object, or array`);
     }
   });
-  return { type, instructions, criteria: [...raw.criteria] };
+  const question: ScoreQuestion = { type, criteria: [...raw.criteria] };
+  if (hasInstructions) question.instructions = instructions;
+  return question;
 }
 
 function validateQuestions(raw: unknown): QuestionMap {
@@ -258,6 +326,15 @@ function validateQuestions(raw: unknown): QuestionMap {
     throw new Error("questions must contain at least one question");
   }
   return ownKeyRecord(raw, (id) => validateQuestion(id, raw[id]));
+}
+
+function assertCommandCodeQuestionLimit(questions: QuestionMap): void {
+  const count = Object.getOwnPropertyNames(questions).length;
+  if (count > MAX_GATEWAY_QUESTIONS) {
+    throw new Error(
+      `Command Code System One accepts at most ${MAX_GATEWAY_QUESTIONS} questions per request; received ${count}`,
+    );
+  }
 }
 
 function isTokenCount(value: unknown): value is number {
@@ -452,7 +529,7 @@ export function registerTypeSafeDecisionTool(pi: ExtensionAPI): void {
     description:
       "Decide typed questions (Noul yes/no, Choice among named options, Score across ordered levels) about a state with TypeSafe Jev. " +
       "Calls TypeSafe directly when its key is configured, otherwise Command Code. " +
-      "Noul criteria are optional. Choice criteria need 2-255 options; Score criteria need 2-10 ordered levels.",
+      "Instructions and rubric descriptions accept strings, JSON objects, arrays, or null. Noul instructions are optional; without non-null instructions, at least one of its true/false criteria must be non-null. Choice criteria need 1-255 options; Score criteria need 1-10 ordered levels, and Score levels cannot be null.",
     promptSnippet: "Answer typed yes/no, multiple-choice, and scoring questions with TypeSafe Jev",
     parameters: decideParameters as never,
 
@@ -479,6 +556,7 @@ export function registerTypeSafeDecisionTool(pi: ExtensionAPI): void {
 
       if (!directKey) {
         throwIfCancelled(signal, "Command Code");
+        assertCommandCodeQuestionLimit(questions);
         const key = await fallbackKey();
         throwIfCancelled(signal, "Command Code");
         if (!key) {
@@ -512,6 +590,11 @@ export function registerTypeSafeDecisionTool(pi: ExtensionAPI): void {
       }
 
       throwIfCancelled(signal, "Command Code");
+      try {
+        assertCommandCodeQuestionLimit(questions);
+      } catch (limitError) {
+        throw new Error(`${failureMessage("TypeSafe", direct)}; ${(limitError as Error).message}`);
+      }
       const key = await fallbackKey();
       throwIfCancelled(signal, "Command Code");
       if (!key) {
