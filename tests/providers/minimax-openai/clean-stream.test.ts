@@ -239,7 +239,7 @@ describe("cleanStream", () => {
       expect(thinkText).toBe("first second");
     });
 
-    it("deduplicates re-streamed reasoning prefix", async () => {
+    it("concatenates native repeated prefixes without deduplication", async () => {
       const base = createAssistantMessageEventStream();
       const partial = makePartial();
       partial.content.push(
@@ -263,7 +263,209 @@ describe("cleanStream", () => {
         .filter((e) => e.type === "thinking_delta")
         .map((e) => (e.type === "thinking_delta" ? e.delta : ""))
         .join("");
-      expect(thinkText).toBe("ABCDEF");
+      expect(thinkText).toBe("ABCABCDEF");
+    });
+
+    it("keeps native whitespace and late signatures after tool start", async () => {
+      const base = createAssistantMessageEventStream();
+      const partial = makePartial();
+      const thinkingBlock: ThinkingContent = {
+        type: "thinking",
+        thinking: "",
+        thinkingSignature: "reasoning_content",
+      };
+      const textBlock: TextContent = { type: "text", text: "" };
+      const toolCall: ToolCall = {
+        type: "toolCall",
+        id: "tc1",
+        name: "read",
+        arguments: { path: "/foo" },
+      };
+      partial.content.push(thinkingBlock);
+
+      pushEvents(base, [
+        { type: "start", partial },
+        { type: "thinking_start", contentIndex: 0, partial },
+        { type: "thinking_delta", contentIndex: 0, delta: " first \n", partial },
+        { type: "thinking_delta", contentIndex: 0, delta: "second ", partial },
+      ]);
+      thinkingBlock.thinking = " first \nsecond ";
+      partial.content.push(textBlock);
+      pushEvents(base, [
+        { type: "text_start", contentIndex: 1, partial },
+        { type: "text_delta", contentIndex: 1, delta: "answer", partial },
+      ]);
+      textBlock.text = "answer";
+      partial.content.push(toolCall);
+      pushEvents(base, [
+        { type: "toolcall_start", contentIndex: 2, partial },
+        { type: "toolcall_delta", contentIndex: 2, delta: '{"path":"/foo"}', partial },
+        { type: "toolcall_end", contentIndex: 2, toolCall, partial },
+        { type: "thinking_end", contentIndex: 0, content: thinkingBlock.thinking, partial },
+        { type: "text_end", contentIndex: 1, content: textBlock.text, partial },
+        { type: "done", reason: "toolUse", message: partial },
+      ]);
+
+      const events = await collectEvents(cleanStream(base));
+      const deltas = events
+        .filter((e) => e.type === "thinking_delta")
+        .map((e) => (e.type === "thinking_delta" ? e.delta : ""))
+        .join("");
+      const ends = events.filter((e) => e.type === "thinking_end");
+      const done = events.find((e) => e.type === "done");
+
+      expect(deltas).toBe(" first \nsecond ");
+      expect(ends).toHaveLength(1);
+      expect(ends[0]).toMatchObject({
+        contentIndex: 0,
+        content: " first \nsecond ",
+      });
+      expect(done?.type).toBe("done");
+      if (done?.type === "done") {
+        expect(done.message.content[0]).toMatchObject({
+          type: "thinking",
+          thinking: " first \nsecond ",
+          thinkingSignature: "reasoning_content",
+        });
+        expect(done.message.content.map((block) => block.type)).toEqual([
+          "thinking",
+          "text",
+          "toolCall",
+        ]);
+      }
+    });
+
+    it("keeps signed reasoning segments around text and tools", async () => {
+      const base = createAssistantMessageEventStream();
+      const partial = makePartial();
+      const thinkingBlock: ThinkingContent = {
+        type: "thinking",
+        thinking: "",
+        thinkingSignature: "reasoning_content",
+      };
+      const textBlock: TextContent = { type: "text", text: "" };
+      const toolCall: ToolCall = {
+        type: "toolCall",
+        id: "tc1",
+        name: "bash",
+        arguments: { command: "ls" },
+      };
+      partial.content.push(thinkingBlock);
+
+      pushEvents(base, [
+        { type: "start", partial },
+        { type: "thinking_start", contentIndex: 0, partial },
+        { type: "thinking_delta", contentIndex: 0, delta: "A", partial },
+      ]);
+      thinkingBlock.thinking = "A";
+      partial.content.push(textBlock);
+      pushEvents(base, [
+        { type: "text_start", contentIndex: 1, partial },
+        { type: "text_delta", contentIndex: 1, delta: "one", partial },
+      ]);
+      textBlock.text = "one";
+      partial.content.push(toolCall);
+      pushEvents(base, [
+        { type: "toolcall_start", contentIndex: 2, partial },
+        { type: "toolcall_delta", contentIndex: 2, delta: '{"command":"ls"}', partial },
+        { type: "toolcall_end", contentIndex: 2, toolCall, partial },
+        { type: "thinking_delta", contentIndex: 0, delta: "B", partial },
+      ]);
+      thinkingBlock.thinking = "AB";
+      pushEvents(base, [
+        { type: "thinking_end", contentIndex: 0, content: "AB", partial },
+        { type: "done", reason: "toolUse", message: partial },
+      ]);
+
+      const events = await collectEvents(cleanStream(base));
+      const done = events.find((e) => e.type === "done");
+
+      expect(done?.type).toBe("done");
+      if (done?.type === "done") {
+        expect(
+          done.message.content.map((block) =>
+            block.type === "thinking"
+              ? { type: block.type, thinking: block.thinking, signature: block.thinkingSignature }
+              : block.type === "text"
+                ? { type: block.type, text: block.text }
+                : { type: block.type, id: block.id },
+          ),
+        ).toEqual([
+          { type: "thinking", thinking: "A", signature: "reasoning_content" },
+          { type: "text", text: "one" },
+          { type: "toolCall", id: "tc1" },
+          { type: "thinking", thinking: "B", signature: "reasoning_content" },
+        ]);
+      }
+    });
+
+    it("splits resumed text at a reused base index", async () => {
+      const base = createAssistantMessageEventStream();
+      const partial = makePartial();
+      const thinkingBlock: ThinkingContent = {
+        type: "thinking",
+        thinking: "",
+        thinkingSignature: "reasoning_content",
+      };
+      const textBlock: TextContent = { type: "text", text: "" };
+      partial.content.push(thinkingBlock);
+
+      pushEvents(base, [
+        { type: "start", partial },
+        { type: "thinking_start", contentIndex: 0, partial },
+        { type: "thinking_delta", contentIndex: 0, delta: "A", partial },
+      ]);
+      thinkingBlock.thinking = "A";
+      partial.content.push(textBlock);
+      pushEvents(base, [
+        { type: "text_start", contentIndex: 1, partial },
+        { type: "text_delta", contentIndex: 1, delta: "one", partial },
+      ]);
+      textBlock.text = "one";
+      pushEvents(base, [
+        { type: "thinking_delta", contentIndex: 0, delta: "B", partial },
+        { type: "text_delta", contentIndex: 1, delta: "two", partial },
+      ]);
+      thinkingBlock.thinking = "AB";
+      textBlock.text = "onetwo";
+      pushEvents(base, [
+        { type: "thinking_end", contentIndex: 0, content: "AB", partial },
+        { type: "text_end", contentIndex: 1, content: "onetwo", partial },
+        { type: "done", reason: "stop", message: partial },
+      ]);
+
+      const events = await collectEvents(cleanStream(base));
+      const done = events.find((e) => e.type === "done");
+      const open = new Set<number>();
+      for (const event of events) {
+        if (event.type === "thinking_start" || event.type === "text_start") {
+          open.add(event.contentIndex);
+        } else if (event.type === "thinking_end" || event.type === "text_end") {
+          expect(open.has(event.contentIndex)).toBe(true);
+          open.delete(event.contentIndex);
+        } else if (event.type === "thinking_delta" || event.type === "text_delta") {
+          expect(open.has(event.contentIndex)).toBe(true);
+        }
+      }
+      expect(open.size).toBe(0);
+
+      expect(done?.type).toBe("done");
+      if (done?.type === "done") {
+        expect(
+          done.message.content.map((block) =>
+            block.type === "thinking"
+              ? { type: block.type, thinking: block.thinking, signature: block.thinkingSignature }
+              : block.type === "text"
+                ? { type: block.type, text: block.text }
+                : { type: block.type },
+          ),
+        ).toEqual([
+          { type: "thinking", thinking: "A", signature: "reasoning_content" },
+          { type: "text", text: "one" },
+          { type: "thinking", thinking: "B", signature: "reasoning_content" },
+          { type: "text", text: "two" },
+        ]);
+      }
     });
   });
 

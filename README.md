@@ -5,7 +5,7 @@
 [![Node >= 24.15.0](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
 
-Register [MiniMax M3](https://www.minimax.io/), [StepFun Flash](https://stepfun.ai/), and [Command Code](https://commandcode.ai/) models as custom providers for [Pi](https://github.com/earendil-works/pi), and add a `typesafe_decide` tool for typed decision questions answered by [TypeSafe](https://typesafe.ai/) Jev. Command Code requires Pi 0.86 or newer.
+Register [MiniMax M3 and M3.1 Flash](https://www.minimax.io/), [StepFun Flash](https://stepfun.ai/), and [Command Code](https://commandcode.ai/) models as custom providers for [Pi](https://github.com/earendil-works/pi), and add a `typesafe_decide` tool for typed decision questions answered by [TypeSafe](https://typesafe.ai/) Jev. Command Code requires Pi 0.86 or newer.
 
 ## Install, Upgrade, And Reload
 
@@ -59,15 +59,21 @@ You can also save a Command Code credential through Pi's login flow:
 
 After reloading, the providers appear in Pi's model picker:
 
-- Select `minimax-openai` (or `minimax-openai-cn`) and choose `MiniMax-M3`.
+- Select `minimax-openai` (or `minimax-openai-cn`) and choose `MiniMax-M3.1-Flash` or `MiniMax-M3`.
 - Select `stepfun-ai` and choose one of `step-3.7-flash`, `step-3.5-flash-2603`, or `step-3.5-flash`.
 - Select `command-code` and choose any bundled Command Code model.
 
-Ask Pi normally; there is no provider-specific prompt syntax. Image input works with `MiniMax-M3`, `step-3.7-flash`, and `command-code` models such as `minimax/minimax-m3.1-flash`.
+Ask Pi normally; there is no provider-specific prompt syntax. Image input works with `MiniMax-M3.1-Flash`, `MiniMax-M3`, `step-3.7-flash`, and `command-code` models such as `minimax/minimax-m3.1-flash`.
 
 The Command Code provider uses the [Provider API](https://commandcode.ai/docs/provider). GOAT membership can use the same API, but access and usage limits follow the current [GOAT plan](https://commandcode.ai/docs/plans/goat) and [pricing and limits](https://commandcode.ai/docs/resources/pricing-limits). This package does not calculate subscription entitlements or included credits.
 
 `typesafe_decide` is a tool, not a selectable chat model, so it never appears in the model picker and never accepts a chat prompt. Pi calls it like any other tool — see [TypeSafe Decisions](#typesafe-decisions).
+
+## What's New In Unreleased
+
+- **Direct MiniMax M3.1 Flash and refreshed M3 metadata** — both regional providers now expose `MiniMax-M3.1-Flash` first and `MiniMax-M3` second, with 1,000,000-token context, a 524,288-token output ceiling through `max_completion_tokens`, standard pricing, and image input. M3 pricing doubles above 512,000 input tokens. `MiniMax-M2.7` and `MiniMax-M2.7-highspeed` are removed from these direct providers only.
+- **Reasoning continuity across tool rounds** — native `reasoning_content` keeps its exact whitespace and signature, interleaved thinking and text stay in arrival order, and unsigned thinking from saved same-model sessions is replayed as ordered `<think>` text for the next request.
+- **Flash effort controls** — `MiniMax-M3.1-Flash` exposes `low`, `medium`, `high`, `xhigh`, and `max`. Omitting effort sends no field and uses upstream's default; the simple path clamps `minimal` to `low`. M3 keeps automatic thinking.
 
 ## What's New In 0.4.1
 
@@ -87,9 +93,8 @@ The Command Code provider uses the [Provider API](https://commandcode.ai/docs/pr
 
 | Provider                               | Model                                            | Input       | Reasoning                 | Context   | Max output                 | Input / output per 1M tokens | Cache read |
 | -------------------------------------- | ------------------------------------------------ | ----------- | ------------------------- | --------- | -------------------------- | ---------------------------- | ---------- |
-| `minimax-openai` / `minimax-openai-cn` | `MiniMax-M3`                                     | text, image | yes                       | 1,000,000 | 512,000                    | $0.60 / $2.40                | $0.12      |
-| `minimax-openai` / `minimax-openai-cn` | `MiniMax-M2.7`                                   | text        | yes                       | 204,800   | 131,072                    | $0.30 / $1.20                | $0.06      |
-| `minimax-openai` / `minimax-openai-cn` | `MiniMax-M2.7-highspeed`                         | text        | yes                       | 204,800   | 131,072                    | $0.60 / $2.40                | $0.06      |
+| `minimax-openai` / `minimax-openai-cn` | `MiniMax-M3.1-Flash`                             | text, image | low / medium / high / xhigh / max | 1,000,000 | 524,288                    | $0.15 / $0.60                | $0.015     |
+| `minimax-openai` / `minimax-openai-cn` | `MiniMax-M3`                                     | text, image | automatic                 | 1,000,000 | 524,288                    | $0.30 / $1.20                | $0.06      |
 | `stepfun-ai`                           | `step-3.7-flash`                                 | text, image | low / medium / high       | 256,000   | 256,000                    | $0.20 / $1.15                | $0.04      |
 | `stepfun-ai`                           | `step-3.5-flash-2603`                            | text        | low / high                | 256,000   | 256,000                    | $0.10 / $0.30                | $0.02      |
 | `stepfun-ai`                           | `step-3.5-flash`                                 | text        | automatic (shown as high) | 256,000   | 256,000                    | $0.10 / $0.30                | $0.02      |
@@ -103,7 +108,9 @@ API bases:
 - `stepfun-ai`: `https://api.stepfun.ai/step_plan/v1`
 - `command-code`: `https://api.commandcode.ai/provider/v1`
 
-Cache writes are free for `MiniMax-M3`. They cost $0.375 per 1M tokens for `MiniMax-M2.7` and `MiniMax-M2.7-highspeed`. They are free for all `stepfun-ai` models.
+Direct MiniMax models use standard service pricing. `MiniMax-M3` doubles to $0.60 / $2.40 / $0.12 per 1M input / output / cache-read tokens above 512,000 input tokens. Both models cap output at 524,288 tokens within the 1,000,000-token context and send `max_completion_tokens`. Cache writes are free for both direct MiniMax models and for all `stepfun-ai` models.
+
+`MiniMax-M3.1-Flash` exposes the five supported thinking efforts: `low`, `medium`, `high`, `xhigh`, and `max`. Omitting effort sends no `reasoning_effort` field and preserves upstream's maximum default. On the simple provider path, `minimal` clamps to `low`. `MiniMax-M3` keeps automatic thinking without an effort or disable control. `MiniMax-M2.7` and `MiniMax-M2.7-highspeed` are no longer bundled by the direct providers; historical changelog entries remain.
 
 ## TypeSafe Decisions
 
@@ -173,6 +180,7 @@ Add a criteria-only Noul, an explicit-null Noul, a one-option Choice, and a one-
 
 - **Key matching.** The provider code passes the corresponding environment-variable reference (`$MINIMAX_API_KEY`, `$MINIMAX_CN_API_KEY`, `$STEP_API_KEY`) to Pi. If the variable is unset, the provider cannot authenticate.
 - **MiniMax tool-call hardening.** The `minimax-openai` and `minimax-openai-cn` providers wrap their streams with a MiniMax-specific pipeline that folds inline `think` blocks into a proper `thinking` content block, repairs empty `{}` tool-call arguments via second-chance JSON parse, reorders tool-result messages to match the order of preceding `tool_use` blocks (the MiniMax API rejects mismatched ordering), and fails closed with a retryable error if the upstream ever emits internal tool-call markup instead of proper OpenAI tool calls.
+- **MiniMax reasoning replay.** Native `reasoning_content` stays a signed thinking block with its exact whitespace, and interleaved thinking/text/tool segments keep their arrival order across a tool round trip. Before a same-model request, unsigned thinking from older saved sessions is replayed as ordered `<think>…</think>` text without changing the stored transcript; signed and foreign history are left to Pi's serializer. No payload rewriting is added.
 - **StepFun native stream.** StepFun uses Pi's built-in OpenAI-compatible driver directly, without the MiniMax hardening pipeline.
 - **Command Code catalog.** The 93 bundled models captured on 2026-10-25 are the fallback baseline, with a default max output of 32,768 capped by each model's context window. A successful live catalog response is authoritative for exposed model IDs, so bundled models missing from that response stay hidden until a later live refresh includes them. Valid live `pricing`, `modalities`, and `reasoning` metadata overrides local estimates; missing fields fall back to dated local capabilities for the verified additions, then to Pi donor metadata, official family defaults, or the dated bundled pricing snapshot. Pi persists the last successful catalog and restores it offline; source-aware online checks run at most every four hours unless forced, and changing `CMD_MODELS_URL` triggers a refresh. Refreshing requires Command Code authentication; on the first run, or after a refresh failure, Pi keeps showing the bundled or prior catalog until a successful refresh completes. Routing is declared per record: `/messages` uses Anthropic Messages, `/responses` uses OpenAI Responses, and `/chat/completions` uses OpenAI Chat Completions. Prices are dated estimates in USD per 1M tokens. Temporary offers use the rates advertised on 2026-10-25 and may change or expire; the explicit free model IDs are zero in this snapshot and must be refreshed when their offers expire or the IDs leave the live catalog. Paid `inclusionai/ling-3.1-flash` is separate from the retired free Ling aliases and keeps its paid rates. DeepSeek V4 uses the displayed off-peak estimate because Pi cannot represent UTC price bands, and its peak input/output rates are higher. Open-model routing and ZDR can also change the actual charge; Command's usage page remains authoritative. `CMD_ZDR=1` applies only when making requests and is never persisted in the model cache.
 - **Command Code Flash effort.** `minimax/minimax-m3.1-flash` accepts text and image input and exposes the five supported thinking efforts: `low`, `medium`, `high`, `xhigh`, and `max`. `minimal` is clamped to `low` on the simple provider path, and omitting effort sends no `reasoning_effort`, preserving upstream's default. The gateway still caps output at 32,768 tokens unless the live catalog advertises a smaller or larger explicit supported limit capped by context.

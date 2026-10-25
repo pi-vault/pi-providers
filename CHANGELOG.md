@@ -9,15 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Direct `MiniMax-M3.1-Flash` on `minimax-openai` and `minimax-openai-cn` with text/image input, 1,000,000-token context, a 524,288-token output ceiling through `max_completion_tokens`, standard $0.15 / $0.60 / $0.015 input/output/cache-read rates, and the five supported thinking efforts (`low`, `medium`, `high`, `xhigh`, `max`). Omitted effort preserves upstream behavior, and the simple provider path clamps `minimal` to `low`.
 - Command Code `minimax/minimax-m3.1-flash` support with text and image input plus the five supported thinking efforts (`low`, `medium`, `high`, `xhigh`, `max`). Omitted effort preserves upstream behavior, and the simple provider path clamps `minimal` to `low`.
 
 ### Changed
 
+- Direct `MiniMax-M3` now uses text/image input, a 524,288-token output ceiling with `max_completion_tokens`, and current standard $0.30 / $1.20 / $0.06 rates that double above 512,000 input tokens. `MiniMax-M2.7` and `MiniMax-M2.7-highspeed` are no longer bundled by the direct providers; Command Code's independent upstream records remain unchanged.
+- MiniMax native reasoning now keeps exact whitespace and signatures, preserves interleaved thinking/text/tool arrival order, and splits resumed runs when Pi reuses a base content index.
 - Refreshed the bundled Command Code catalog to 93 models captured 2026-10-25. Added 13 records and removed six retired or renamed ones, including the retired free Ling and stealth aliases; paid `inclusionai/ling-3.1-flash` keeps its own nonzero rates.
 - Refreshed dated Command Code costs, including new exact-ID rates, Haiku 5.5 context tiers, and the retained Sonnet 5.5 cache-read estimate. Live metadata still overrides local capabilities and pricing.
 
 ### Fixed
 
+- MiniMax preserves spaces, line breaks, and code indentation when visible text resumes after native reasoning, including when replaying that answer in the next request.
+- MiniMax no longer trims reasoning fragments or deduplicates repeated prefixes, and no longer loses a reasoning signature when Pi delays `thinking_end` until after a text or tool boundary.
+- Replaying an older same-model MiniMax session now converts unsigned thinking blocks into ordered `<think>` text without mutating the stored transcript or rewriting signed/foreign history.
 - Command Code catalog conversion now treats model IDs matching inherited object properties as unknown models, preserving fallback metadata and successful refreshes.
 - `typesafe_decide` now accepts the documented TypeSafe text-question contract: optional or null instructions, Noul questions described by a non-null `true` / `false` criterion when instructions are absent, 1–255 Choice options with nullable descriptions, and 1–10 non-null Score levels. Omitted fields and explicit null keep their distinct wire shapes.
 - `typesafe_decide` blocks Command Code System One requests above 100 questions on both the initial gateway route and retryable fallback, while direct TypeSafe requests remain unrestricted. An oversized direct failure reports the sanitized direct cause plus the gateway restriction and is never split or forwarded.

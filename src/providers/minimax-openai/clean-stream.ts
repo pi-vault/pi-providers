@@ -17,6 +17,7 @@ const LEAKED_TOOL_MARKUP_ERROR =
 interface TextState {
   scanner: ThinkScanner;
   started: boolean;
+  hasText: boolean;
   index: number;
   block: TextContent;
   leakedToolMarkupBuffer: string;
@@ -57,7 +58,7 @@ export function cleanStream(base: AssistantMessageEventStream): AssistantMessage
     let output: AssistantMessage | undefined;
     const toolIndexMap = new Map<number, number>();
     const textStates = new Map<number, TextState>();
-    const baseThinkingAccs = new Map<number, string>();
+    const baseThinkingSignatures = new Map<number, string>();
     let sawBaseThinking = false;
     let segment: ThinkingSegment | undefined;
 
@@ -70,12 +71,22 @@ export function cleanStream(base: AssistantMessageEventStream): AssistantMessage
       Object.assign(output, meta);
     };
 
-    const ensureSegment = (): ThinkingSegment => {
-      if (segment?.open) return segment;
+    const ensureSegment = (signature?: string): ThinkingSegment => {
+      if (segment?.open) {
+        if (signature && !segment.signature) segment.signature = signature;
+        return segment;
+      }
+      closeAllText();
       const block: ThinkingContent = { type: "thinking", thinking: "" };
+      if (signature) block.thinkingSignature = signature;
       output!.content.push(block);
-      segment = { block, index: output!.content.length - 1, open: true, text: "" };
-      baseThinkingAccs.clear();
+      segment = {
+        block,
+        index: output!.content.length - 1,
+        open: true,
+        text: "",
+        signature,
+      };
       out.push({ type: "thinking_start", contentIndex: segment.index, partial: output! });
       return segment;
     };
@@ -83,7 +94,6 @@ export function cleanStream(base: AssistantMessageEventStream): AssistantMessage
     const closeSegment = () => {
       if (!segment?.open) return;
       segment.open = false;
-      segment.text = segment.text.trimEnd();
       segment.block.thinking = segment.text;
       if (segment.signature) {
         (segment.block as ThinkingContent & { thinkingSignature?: string }).thinkingSignature =
@@ -97,31 +107,24 @@ export function cleanStream(base: AssistantMessageEventStream): AssistantMessage
       });
     };
 
-    const appendThinking = (delta: string) => {
+    const appendThinking = (delta: string, signature?: string) => {
       if (!delta || !output) return;
-      const seg = ensureSegment();
-      if (seg.text === "") {
-        delta = delta.replace(/^\s+/, "");
-        if (!delta) return;
-      }
+      const seg = ensureSegment(signature);
       seg.text += delta;
       seg.block.thinking = seg.text;
       out.push({ type: "thinking_delta", contentIndex: seg.index, delta, partial: output });
     };
 
-    const pushBaseThinking = (contentIndex: number, delta: string) => {
-      const acc = (baseThinkingAccs.get(contentIndex) ?? "") + delta;
-      baseThinkingAccs.set(contentIndex, acc);
-      const have = segment?.open ? segment.text : "";
-      const norm = acc.replace(/^\s+/, "");
-      if (norm.length <= have.length) {
-        if (have.startsWith(norm)) return;
-        appendThinking(delta);
-      } else if (norm.startsWith(have)) {
-        appendThinking(norm.slice(have.length));
-      } else {
-        appendThinking(delta);
-      }
+    const signatureAt = (partial: AssistantMessage, contentIndex: number) => {
+      const block = partial.content[contentIndex];
+      return block?.type === "thinking" ? block.thinkingSignature : undefined;
+    };
+
+    const pushBaseThinking = (contentIndex: number, delta: string, partial: AssistantMessage) => {
+      const signature =
+        signatureAt(partial, contentIndex) ?? baseThinkingSignatures.get(contentIndex);
+      if (signature) baseThinkingSignatures.set(contentIndex, signature);
+      appendThinking(delta, signature);
     };
 
     const pushInlineThinking = (think: string) => {
@@ -129,15 +132,35 @@ export function cleanStream(base: AssistantMessageEventStream): AssistantMessage
       appendThinking(think);
     };
 
+    // Thinking/tool boundaries split a text run, but its surrounding whitespace is internal text.
+    const closeText = (state: TextState, trimEnd = false) => {
+      if (trimEnd) state.block.text = state.block.text.trimEnd();
+      if (!state.started || !output) return;
+      out.push({
+        type: "text_end",
+        contentIndex: state.index,
+        content: state.block.text,
+        partial: output,
+      });
+      state.started = false;
+      state.index = -1;
+    };
+
+    const closeAllText = (trimEnd = false) => {
+      for (const state of textStates.values()) closeText(state, trimEnd);
+    };
+
     const pushText = (state: TextState, text: string) => {
       if (!text || !output) return;
       if (!state.started) {
-        text = text.replace(/^\s+/, "");
+        if (!state.hasText) text = text.replace(/^\s+/, "");
         if (!text) return;
         closeSegment();
+        state.block = { type: "text", text: "" };
         output.content.push(state.block);
         state.index = output.content.length - 1;
         state.started = true;
+        state.hasText = true;
         out.push({ type: "text_start", contentIndex: state.index, partial: output });
       }
       state.block.text += text;
@@ -156,17 +179,6 @@ export function cleanStream(base: AssistantMessageEventStream): AssistantMessage
       pushText(state, tail.text);
     };
 
-    const closeText = (state: TextState) => {
-      if (!state.started || !output) return;
-      state.block.text = state.block.text.trimEnd();
-      out.push({
-        type: "text_end",
-        contentIndex: state.index,
-        content: state.block.text,
-        partial: output,
-      });
-    };
-
     try {
       for await (const ev of base) {
         switch (ev.type) {
@@ -178,29 +190,32 @@ export function cleanStream(base: AssistantMessageEventStream): AssistantMessage
           case "thinking_start": {
             sawBaseThinking = true;
             syncMeta(ev.partial);
-            baseThinkingAccs.set(ev.contentIndex, "");
+            const signature = signatureAt(ev.partial, ev.contentIndex);
+            if (signature) baseThinkingSignatures.set(ev.contentIndex, signature);
             break;
           }
           case "thinking_delta": {
             syncMeta(ev.partial);
-            pushBaseThinking(ev.contentIndex, ev.delta);
+            pushBaseThinking(ev.contentIndex, ev.delta, ev.partial);
             break;
           }
           case "thinking_end": {
             syncMeta(ev.partial);
-            const baseBlock = ev.partial.content[ev.contentIndex] as
-              | (ThinkingContent & { thinkingSignature?: string })
-              | undefined;
-            if (segment && baseBlock?.type === "thinking" && baseBlock.thinkingSignature) {
-              segment.signature = baseBlock.thinkingSignature;
+            const signature = signatureAt(ev.partial, ev.contentIndex);
+            if (signature) {
+              baseThinkingSignatures.set(ev.contentIndex, signature);
+              if (segment?.open && !segment.signature) segment.signature = signature;
             }
             break;
           }
           case "text_start": {
             syncMeta(ev.partial);
+            const previous = textStates.get(ev.contentIndex);
+            if (previous) closeText(previous, true);
             textStates.set(ev.contentIndex, {
               scanner: new ThinkScanner(),
               started: false,
+              hasText: false,
               index: -1,
               block: { type: "text", text: "" },
               leakedToolMarkupBuffer: "",
@@ -215,7 +230,7 @@ export function cleanStream(base: AssistantMessageEventStream): AssistantMessage
             routeSafeText(state, scanned.text);
             if (scanned.leaked) {
               flushScanner(state);
-              closeText(state);
+              closeText(state, true);
               closeSegment();
               console.error("[minimax-openai] leaked tool-call markup detected");
               if (!output) return;
@@ -240,11 +255,12 @@ export function cleanStream(base: AssistantMessageEventStream): AssistantMessage
             state.leakedToolMarkupBuffer = "";
             if (trailing) routeSafeText(state, trailing);
             flushScanner(state);
-            closeText(state);
+            closeText(state, true);
             break;
           }
           case "toolcall_start": {
             syncMeta(ev.partial);
+            closeAllText();
             closeSegment();
             const baseBlock = ev.partial.content[ev.contentIndex];
             output!.content.push(baseBlock as ToolCall);
@@ -282,6 +298,7 @@ export function cleanStream(base: AssistantMessageEventStream): AssistantMessage
             break;
           }
           case "done": {
+            closeAllText(true);
             closeSegment();
             const message: AssistantMessage = {
               ...ev.message,
@@ -291,6 +308,7 @@ export function cleanStream(base: AssistantMessageEventStream): AssistantMessage
             break;
           }
           case "error": {
+            closeAllText(true);
             closeSegment();
             const error: AssistantMessage = {
               ...ev.error,
