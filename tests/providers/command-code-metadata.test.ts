@@ -87,6 +87,27 @@ const expectedAdditions: Record<
 };
 
 describe("Command Code local metadata", () => {
+  it.each(["constructor", "toString", "__proto__"])(
+    "uses unknown-model defaults for inherited property ID %s",
+    (id) => {
+      expect(
+        modelFromCatalogRecord({
+          id,
+          name: "Unknown Gateway Model",
+          contextWindow: 32_000,
+          supportedEndpoints: ["/chat/completions"],
+        }),
+      ).toMatchObject({
+        id,
+        api: "openai-completions",
+        reasoning: true,
+        input: ["text"],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        maxTokens: 32_000,
+      });
+    },
+  );
+
   it("uses verified capabilities without a Pi donor", () => {
     expect(Object.keys(expectedAdditions)).toHaveLength(13);
 

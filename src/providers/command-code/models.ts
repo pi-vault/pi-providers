@@ -114,7 +114,12 @@ export function modelFromCatalogRecord(record: CommandCodeCatalogRecord): Comman
   if (!usesMessages && !usesCompletions && !usesResponses) {
     throw new Error(`Unsupported Command Code model endpoints: ${record.id}`);
   }
-  const local = COMMAND_CAPABILITIES[record.id as CommandCodeCatalogId];
+  const local = Object.hasOwn(COMMAND_CAPABILITIES, record.id)
+    ? COMMAND_CAPABILITIES[record.id as CommandCodeCatalogId]
+    : undefined;
+  const localCost = Object.hasOwn(COMMAND_COSTS, record.id)
+    ? COMMAND_COSTS[record.id as CommandCodeCatalogId]
+    : undefined;
   const input: ("text" | "image")[] = record.input
     ? [...record.input]
     : local
@@ -132,7 +137,7 @@ export function modelFromCatalogRecord(record: CommandCodeCatalogRecord): Comman
     baseUrl: usesMessages ? COMMAND_CODE_ANTHROPIC_BASE_URL : COMMAND_CODE_BASE_URL,
     reasoning,
     input,
-    cost: record.cost ?? COMMAND_COSTS[record.id as CommandCodeCatalogId] ?? ZERO_COST,
+    cost: record.cost ?? localCost ?? ZERO_COST,
     contextWindow: record.contextWindow,
     maxTokens: Math.min(
       record.maxOutputTokens ?? COMMAND_CODE_FALLBACK_MAX_TOKENS,

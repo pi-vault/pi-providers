@@ -1049,6 +1049,36 @@ describe("Command Code Flash inference", () => {
 });
 
 describe("Command Code live catalog", () => {
+  it("publishes models whose IDs match inherited object properties", async () => {
+    const ids = ["constructor", "toString", "__proto__"];
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({
+        object: "list",
+        data: ids.map((id) => ({
+          id,
+          name: "Unknown Gateway Model",
+          context_length: 32_000,
+          supported_endpoints: ["/chat/completions"],
+        })),
+      }),
+    );
+    const { models, modelsStore } = await createRefreshModels();
+
+    const result = await models.refresh({ providers: ["command-code"], force: true });
+
+    expect(result.errors.size).toBe(0);
+    expect(models.getModels("command-code").map((model) => model.id)).toEqual(ids);
+    expect((await modelsStore.read("command-code"))?.models).toEqual(
+      ids.map((id) =>
+        expect.objectContaining({
+          id,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        }),
+      ),
+    );
+  });
+
   it("fetches the default Command Code models URL", async () => {
     const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(validPayload));
     const { models } = await createRefreshModels();
@@ -1659,6 +1689,44 @@ describe("Command Code live catalog", () => {
     expect(fetch).not.toHaveBeenCalled();
     expect(models.getModel("command-code", cached.id)).toEqual(cached);
     expect(models.getModel("command-code", "claude-sonnet-5")).toBeUndefined();
+  });
+
+  it("keeps bundled Flash hidden offline until a successful catalog refresh", async () => {
+    const fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(jsonResponse(commandCodeModelsFixture));
+    const { models, modelsStore, cached } = await createStoredRefreshModels(Date.now());
+
+    await models.refresh({ providers: ["command-code"], allowNetwork: false });
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(models.getModel("command-code", cached.id)).toEqual(cached);
+    expect(models.getModel("command-code", FLASH_MODEL_ID)).toBeUndefined();
+
+    const result = await models.refresh({ providers: ["command-code"], force: true });
+
+    expect(result.errors.size).toBe(0);
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(models.getModel("command-code", cached.id)).toBeUndefined();
+    const expectedFlash = {
+      id: FLASH_MODEL_ID,
+      api: "openai-completions",
+      compat: { supportsReasoningEffort: true },
+      thinkingLevelMap: {
+        off: null,
+        minimal: null,
+        low: "low",
+        medium: "medium",
+        high: "high",
+        xhigh: "xhigh",
+        max: "max",
+      },
+    };
+    expect(models.getModel("command-code", FLASH_MODEL_ID)).toMatchObject(expectedFlash);
+    const storedFlash = (await modelsStore.read("command-code"))?.models.find(
+      (model) => model.id === FLASH_MODEL_ID,
+    );
+    expect(storedFlash).toMatchObject(expectedFlash);
   });
 
   it("migrates legacy output limits without capping versioned explicit limits", async () => {

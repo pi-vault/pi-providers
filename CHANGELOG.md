@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Command Code catalog conversion now treats model IDs matching inherited object properties as unknown models, preserving fallback metadata and successful refreshes.
 - `typesafe_decide` now accepts the documented TypeSafe text-question contract: optional or null instructions, Noul questions described by a non-null `true` / `false` criterion when instructions are absent, 1–255 Choice options with nullable descriptions, and 1–10 non-null Score levels. Omitted fields and explicit null keep their distinct wire shapes.
 - `typesafe_decide` blocks Command Code System One requests above 100 questions on both the initial gateway route and retryable fallback, while direct TypeSafe requests remain unrestricted. An oversized direct failure reports the sanitized direct cause plus the gateway restriction and is never split or forwarded.
 
