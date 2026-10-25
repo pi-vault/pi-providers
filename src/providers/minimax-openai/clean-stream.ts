@@ -17,6 +17,7 @@ const LEAKED_TOOL_MARKUP_ERROR =
 interface TextState {
   scanner: ThinkScanner;
   started: boolean;
+  hasText: boolean;
   index: number;
   block: TextContent;
   leakedToolMarkupBuffer: string;
@@ -131,9 +132,10 @@ export function cleanStream(base: AssistantMessageEventStream): AssistantMessage
       appendThinking(think);
     };
 
-    const closeText = (state: TextState) => {
+    // Thinking/tool boundaries split a text run, but its surrounding whitespace is internal text.
+    const closeText = (state: TextState, trimEnd = false) => {
+      if (trimEnd) state.block.text = state.block.text.trimEnd();
       if (!state.started || !output) return;
-      state.block.text = state.block.text.trimEnd();
       out.push({
         type: "text_end",
         contentIndex: state.index,
@@ -144,20 +146,21 @@ export function cleanStream(base: AssistantMessageEventStream): AssistantMessage
       state.index = -1;
     };
 
-    const closeAllText = () => {
-      for (const state of textStates.values()) closeText(state);
+    const closeAllText = (trimEnd = false) => {
+      for (const state of textStates.values()) closeText(state, trimEnd);
     };
 
     const pushText = (state: TextState, text: string) => {
       if (!text || !output) return;
       if (!state.started) {
-        text = text.replace(/^\s+/, "");
+        if (!state.hasText) text = text.replace(/^\s+/, "");
         if (!text) return;
         closeSegment();
         state.block = { type: "text", text: "" };
         output.content.push(state.block);
         state.index = output.content.length - 1;
         state.started = true;
+        state.hasText = true;
         out.push({ type: "text_start", contentIndex: state.index, partial: output });
       }
       state.block.text += text;
@@ -208,10 +211,11 @@ export function cleanStream(base: AssistantMessageEventStream): AssistantMessage
           case "text_start": {
             syncMeta(ev.partial);
             const previous = textStates.get(ev.contentIndex);
-            if (previous) closeText(previous);
+            if (previous) closeText(previous, true);
             textStates.set(ev.contentIndex, {
               scanner: new ThinkScanner(),
               started: false,
+              hasText: false,
               index: -1,
               block: { type: "text", text: "" },
               leakedToolMarkupBuffer: "",
@@ -226,7 +230,7 @@ export function cleanStream(base: AssistantMessageEventStream): AssistantMessage
             routeSafeText(state, scanned.text);
             if (scanned.leaked) {
               flushScanner(state);
-              closeText(state);
+              closeText(state, true);
               closeSegment();
               console.error("[minimax-openai] leaked tool-call markup detected");
               if (!output) return;
@@ -251,7 +255,7 @@ export function cleanStream(base: AssistantMessageEventStream): AssistantMessage
             state.leakedToolMarkupBuffer = "";
             if (trailing) routeSafeText(state, trailing);
             flushScanner(state);
-            closeText(state);
+            closeText(state, true);
             break;
           }
           case "toolcall_start": {
@@ -294,7 +298,7 @@ export function cleanStream(base: AssistantMessageEventStream): AssistantMessage
             break;
           }
           case "done": {
-            closeAllText();
+            closeAllText(true);
             closeSegment();
             const message: AssistantMessage = {
               ...ev.message,
@@ -304,7 +308,7 @@ export function cleanStream(base: AssistantMessageEventStream): AssistantMessage
             break;
           }
           case "error": {
-            closeAllText();
+            closeAllText(true);
             closeSegment();
             const error: AssistantMessage = {
               ...ev.error,

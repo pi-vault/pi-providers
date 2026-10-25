@@ -528,6 +528,47 @@ describe("MiniMax native reasoning replay", () => {
     expect(wire.content).toBe("onetwo");
   });
 
+  it.each([
+    { before: "  hello ", after: " world  ", text: "hello  world" },
+    {
+      before: "```ts\n",
+      after: "  const x = 1;\n```  ",
+      text: "```ts\n  const x = 1;\n```",
+    },
+  ])("preserves visible whitespace around reasoning: $text", async ({ before, after, text }) => {
+    const registrations = registerProviders();
+    const region = REGIONS[0];
+    const config = registrationFor(registrations, region.provider);
+    const flash = modelFor(config, region, FLASH);
+    const first = await runStream(config, flash, userContext(), () =>
+      sse(
+        [
+          chunk(FLASH, { content: before }),
+          chunk(FLASH, { reasoning_content: "check" }),
+          chunk(FLASH, { content: after }),
+          chunk(FLASH, {}, "stop"),
+          usageChunk(FLASH),
+          DONE,
+        ].join(""),
+      ),
+    );
+    const message = terminalMessage(first.events);
+    expect(
+      message.content
+        .filter((block) => block.type === "text")
+        .map((block) => block.text)
+        .join(""),
+    ).toBe(text);
+
+    const second = await runStream(
+      config,
+      flash,
+      { messages: [...userContext().messages, message] },
+      () => simpleResponse(FLASH),
+    );
+    expect(assistantWireMessage(second.body).content).toBe(text);
+  });
+
   it("runs payload and response hooks once against the builtin driver model", async () => {
     const registrations = registerProviders();
     const region = REGIONS[0];
