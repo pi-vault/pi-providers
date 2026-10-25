@@ -7,8 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Command Code `minimax/minimax-m3.1-flash` support with text and image input plus the five supported thinking efforts (`low`, `medium`, `high`, `xhigh`, `max`). Omitted effort preserves upstream behavior, and the simple provider path clamps `minimal` to `low`.
+
+### Changed
+
+- Refreshed the bundled Command Code catalog to 93 models captured 2026-10-25. Added 13 records and removed six retired or renamed ones, including the retired free Ling and stealth aliases; paid `inclusionai/ling-3.1-flash` keeps its own nonzero rates.
+- Refreshed dated Command Code costs, including new exact-ID rates, Haiku 5.5 context tiers, and the retained Sonnet 5.5 cache-read estimate. Live metadata still overrides local capabilities and pricing.
+
 ### Fixed
 
+- Command Code catalog conversion now treats model IDs matching inherited object properties as unknown models, preserving fallback metadata and successful refreshes.
 - `typesafe_decide` now accepts the documented TypeSafe text-question contract: optional or null instructions, Noul questions described by a non-null `true` / `false` criterion when instructions are absent, 1–255 Choice options with nullable descriptions, and 1–10 non-null Score levels. Omitted fields and explicit null keep their distinct wire shapes.
 - `typesafe_decide` blocks Command Code System One requests above 100 questions on both the initial gateway route and retryable fallback, while direct TypeSafe requests remain unrestricted. An oversized direct failure reports the sanitized direct cause plus the gateway restriction and is never split or forwarded.
 

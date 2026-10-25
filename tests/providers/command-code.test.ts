@@ -7,6 +7,7 @@ import {
   normalizeContext,
 } from "@earendil-works/pi-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import commandCodeModelsFixture from "../fixtures/command-code-models.json";
 import {
   COMMAND_CODE_CATALOG,
   commandCodeModels,
@@ -16,6 +17,42 @@ import {
   createCommandCodeProvider,
   registerCommandCode,
 } from "../../src/providers/command-code.ts";
+
+const FLASH_MODEL_ID = "minimax/minimax-m3.1-flash";
+const CHAT_ENDPOINTS = ["/messages", "/chat/completions", "/responses"] as const;
+
+const fixtureChatRecords = commandCodeModelsFixture.data.filter((record) =>
+  record.supported_endpoints.some((endpoint) =>
+    CHAT_ENDPOINTS.includes(endpoint as (typeof CHAT_ENDPOINTS)[number]),
+  ),
+);
+
+type CatalogProjectionRecord = {
+  id: string;
+  name: string;
+  contextWindow: number;
+  supportedEndpoints: readonly string[];
+};
+
+function catalogProjection(records: readonly CatalogProjectionRecord[]) {
+  return records
+    .map((record) => ({
+      id: record.id,
+      name: record.name,
+      contextWindow: record.contextWindow,
+      supportedEndpoints: [...record.supportedEndpoints],
+    }))
+    .sort((left, right) => left.id.localeCompare(right.id));
+}
+
+const fixtureCatalogProjection = catalogProjection(
+  fixtureChatRecords.map((record) => ({
+    id: record.id,
+    name: record.name,
+    contextWindow: record.context_length,
+    supportedEndpoints: record.supported_endpoints,
+  })),
+);
 
 const validPayload = {
   object: "list",
@@ -110,6 +147,129 @@ async function captureRequest(modelId: string): Promise<Request> {
 
   if (!captured) throw new Error(`No request captured for: ${modelId}`);
   return captured;
+}
+
+type FlashEffort = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+
+function flashSseResponse(): Response {
+  const chunk = (value: unknown) => `data: ${JSON.stringify(value)}\n\n`;
+  const base = {
+    id: "chatcmpl-flash-test",
+    object: "chat.completion.chunk",
+    created: 0,
+    model: FLASH_MODEL_ID,
+  };
+  const body = [
+    chunk({
+      ...base,
+      choices: [
+        { index: 0, delta: { reasoning_content: "thinking through" }, finish_reason: null },
+      ],
+    }),
+    chunk({
+      ...base,
+      choices: [{ index: 0, delta: { content: "answer" }, finish_reason: null }],
+    }),
+    chunk({ ...base, choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }),
+    chunk({
+      ...base,
+      choices: [],
+      usage: {
+        prompt_tokens: 11,
+        completion_tokens: 7,
+        total_tokens: 18,
+        prompt_tokens_details: { cached_tokens: 3 },
+      },
+    }),
+    "data: [DONE]\n\n",
+  ].join("");
+
+  return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+}
+
+function flashContext() {
+  return normalizeContext({
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "hello" },
+          { type: "image", data: "aGVsbG8=", mimeType: "image/png" },
+        ],
+        timestamp: Date.now(),
+      },
+    ],
+  });
+}
+
+function flashFor(
+  provider: ReturnType<typeof createCommandCodeProvider>,
+  modelId = FLASH_MODEL_ID,
+): Model<"openai-completions"> {
+  const model = provider.getModels().find((candidate) => candidate.id === modelId);
+  if (model?.api !== "openai-completions") {
+    throw new Error(`Missing completions test model: ${modelId}`);
+  }
+  return model as Model<"openai-completions">;
+}
+
+async function runFlashStream(
+  provider: ReturnType<typeof createCommandCodeProvider>,
+  model: Model<"openai-completions">,
+  mode: "stream" | "simple",
+  options: { reasoningEffort?: FlashEffort; reasoning?: FlashEffort; maxTokens?: number } = {},
+) {
+  let captured: Request | undefined;
+  const fetch: typeof globalThis.fetch = async (input, init) => {
+    captured = new Request(input, init);
+    return flashSseResponse();
+  };
+  const shared = { apiKey: "test-key", fetch, maxRetries: 0 };
+  const stream =
+    mode === "stream"
+      ? provider.stream(model, flashContext(), {
+          ...shared,
+          reasoningEffort: options.reasoningEffort,
+          maxTokens: options.maxTokens,
+        })
+      : provider.streamSimple(model, flashContext(), {
+          ...shared,
+          reasoning: options.reasoning,
+          maxTokens: options.maxTokens,
+        });
+  const result = await stream.result();
+
+  if (!captured) throw new Error(`No request captured for: ${model.id}`);
+  return { request: captured, result };
+}
+
+function expectFlashUsage(result: Awaited<ReturnType<typeof runFlashStream>>["result"]) {
+  expect(result.usage).toMatchObject({
+    input: 8,
+    cacheRead: 3,
+    output: 7,
+    totalTokens: 18,
+  });
+  expect(result.content).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ type: "thinking", thinking: "thinking through" }),
+      expect.objectContaining({ type: "text", text: "answer" }),
+    ]),
+  );
+  expect(result.stopReason).toBe("stop");
+}
+
+function expectFlashRequestBody(body: Record<string, unknown>, effort?: string) {
+  expect(body.model).toBe(FLASH_MODEL_ID);
+  expect(body.max_tokens).toBe(32_768);
+  expect(body).not.toHaveProperty("max_completion_tokens");
+  expect(body.stream_options).toEqual({ include_usage: true });
+  if (effort === undefined) {
+    expect(body).not.toHaveProperty("reasoning_effort");
+  } else {
+    expect(body.reasoning_effort).toBe(effort);
+  }
+  expect(JSON.stringify(body.messages)).toContain("image_url");
 }
 
 describe("Command Code catalog conversion", () => {
@@ -233,37 +393,32 @@ describe("Command Code catalog conversion", () => {
 
   it("bundles the captured Command Code catalog", () => {
     const addedIds = [
-      "claude-fable-5-1",
-      "claude-sonnet-5-5",
-      "claude-opus-5-5",
-      "gpt-6-astra",
-      "gpt-6.1-sol",
-      "gpt-6-sol",
-      "gpt-6-luna",
-      "deepseek/deepseek-v4-flash-fast",
-      "deepseek/deepseek-v4.1-flash",
-      "deepseek/deepseek-v4.1-flash-fast",
-      "z-ai/glm-5.3-flashx",
-      "xiaomi/mimo-v2.6-pro",
-      "xiaomi/mimo-v2.6-pro-ultraspeed",
-      "xiaomi/mimo-v2.6-flash",
-      "Qwen/Qwen3.8-Omni-Flash",
-      "Qwen/Qwen3.8-Max-0902",
-      "meituan/LongCat-2.0",
-      "stepfun/Step-5-Preview",
-      "google/gemini-3.8-flash",
-      "stealth/space-bunny-alpha",
-      "stealth/pixel-canary",
+      "claude-haiku-5-5",
+      "moonshotai/Kimi-K3.1-Pro",
+      FLASH_MODEL_ID,
+      "ornith/ornith-1.5-122b",
+      "Qwen/Qwen3.8-Max-Prime",
+      "google/gemini-4-argon",
+      "nvidia/nemotron-3.5-super-vl",
+      "stealth/glyph-cluster:free",
+      "reflection/beam:free",
+      "inclusionai/ling-3.1-flash",
+      "meta/muse-spark-open",
+      "meta/muse-wonder-1.0",
+      "mistral/mistral-large-4",
+    ];
+    const removedIds = [
       "inclusionai/ling-3.0-flash-sante:free",
       "inclusionai/ling-3.1-flash:free",
-      "meta/muse-spark-1.3",
-      "meta/muse-spark-1.3-contributor",
-      "xai/grok-4.7",
+      "stealth/pixel-canary",
+      "stealth/space-bunny-alpha",
+      "xiaomi/mimo-v2.5",
+      "xiaomi/mimo-v2.5-pro",
     ];
     const ids = COMMAND_CODE_CATALOG.map((model) => model.id);
 
-    expect(COMMAND_CODE_CATALOG).toHaveLength(86);
-    expect(new Set(ids).size).toBe(86);
+    expect(COMMAND_CODE_CATALOG).toHaveLength(93);
+    expect(new Set(ids).size).toBe(93);
     expect(
       COMMAND_CODE_CATALOG.every(
         (model) =>
@@ -276,19 +431,17 @@ describe("Command Code catalog conversion", () => {
       ),
     ).toBe(true);
     expect(ids).toEqual(expect.arrayContaining(addedIds));
-    expect(ids).not.toEqual(
-      expect.arrayContaining(["minimax/minimax-m3-free", "minimax/minimax-m2.7-free"]),
-    );
+    expect(ids).not.toEqual(expect.arrayContaining(removedIds));
     expect(
       COMMAND_CODE_CATALOG.filter((model) => model.supportedEndpoints.includes("/messages")),
-    ).toHaveLength(10);
+    ).toHaveLength(11);
     expect(
       COMMAND_CODE_CATALOG.filter(
         (model) =>
           model.supportedEndpoints.length === 1 &&
           model.supportedEndpoints[0] === "/chat/completions",
       ),
-    ).toHaveLength(8);
+    ).toHaveLength(10);
     expect(
       COMMAND_CODE_CATALOG.filter(
         (model) =>
@@ -296,7 +449,7 @@ describe("Command Code catalog conversion", () => {
           model.supportedEndpoints.includes("/chat/completions") &&
           model.supportedEndpoints.includes("/responses"),
       ),
-    ).toHaveLength(68);
+    ).toHaveLength(72);
     expect(COMMAND_CODE_CATALOG.find((model) => model.id === "gpt-5.5")?.contextWindow).toBe(
       400_000,
     );
@@ -306,14 +459,15 @@ describe("Command Code catalog conversion", () => {
     expect(
       COMMAND_CODE_CATALOG.find((model) => model.id === "deepseek/deepseek-v4-pro")?.name,
     ).toBe("DeepSeek V4 Pro (latest)");
-    expect(commandCodeModels).toHaveLength(86);
+    expect(
+      COMMAND_CODE_CATALOG.find((model) => model.id === "MiniMaxAI/MiniMax-M2.7"),
+    ).toBeDefined();
+    expect(commandCodeModels).toHaveLength(93);
 
     const zeroCostIds = new Set([
       "poolside/laguna-s-2.1-free",
-      "stealth/space-bunny-alpha",
-      "stealth/pixel-canary",
-      "inclusionai/ling-3.0-flash-sante:free",
-      "inclusionai/ling-3.1-flash:free",
+      "stealth/glyph-cluster:free",
+      "reflection/beam:free",
     ]);
 
     expect(
@@ -334,6 +488,62 @@ describe("Command Code catalog conversion", () => {
     ).toBe(true);
   });
 
+  it("matches the captured fixture record for record", () => {
+    expect(catalogProjection(COMMAND_CODE_CATALOG)).toEqual(fixtureCatalogProjection);
+  });
+
+  it("uses captured endpoints rather than inferred endpoint families", () => {
+    const endpointsFor = (id: string) =>
+      COMMAND_CODE_CATALOG.find((model) => model.id === id)?.supportedEndpoints;
+
+    expect(endpointsFor("claude-haiku-5-5")).toEqual(["/messages"]);
+    expect(endpointsFor(FLASH_MODEL_ID)).toEqual(["/chat/completions"]);
+    expect(endpointsFor("mistral/mistral-large-4")).toEqual(["/chat/completions", "/responses"]);
+    expect(endpointsFor("Qwen/Qwen3.8-Max-0902")).toEqual(["/chat/completions"]);
+  });
+
+  it("keeps paid Ling separate from retired free aliases", () => {
+    const ling = COMMAND_CODE_CATALOG.find((model) => model.id === "inclusionai/ling-3.1-flash");
+
+    expect(ling).toMatchObject({
+      supportedEndpoints: ["/chat/completions"],
+    });
+    expect(
+      modelFromCatalogRecord(ling ?? { id: "", name: "", contextWindow: 0, supportedEndpoints: [] })
+        .cost,
+    ).toEqual({ input: 0.3, output: 0.9, cacheRead: 0.06, cacheWrite: 0 });
+    expect(COMMAND_CODE_CATALOG.map((model) => model.id)).not.toEqual(
+      expect.arrayContaining([
+        "inclusionai/ling-3.0-flash-sante:free",
+        "inclusionai/ling-3.1-flash:free",
+      ]),
+    );
+  });
+
+  it("preserves Haiku context pricing tiers", () => {
+    const model = COMMAND_CODE_CATALOG.find((record) => record.id === "claude-haiku-5-5");
+    if (!model) throw new Error("Missing claude-haiku-5-5");
+
+    expect(modelFromCatalogRecord(model).cost).toEqual({
+      input: 0.1,
+      output: 0.5,
+      cacheRead: 0.01,
+      cacheWrite: 0.125,
+      tiers: [
+        {
+          inputTokensAbove: 100_000,
+          input: 0.5,
+          output: 2.5,
+          cacheRead: 0.05,
+          cacheWrite: 0.625,
+        },
+      ],
+    });
+    expect(
+      modelFromCatalogRecord({ ...model, id: "claude-sonnet-5-5", name: "Claude Sonnet 5.5" }).cost,
+    ).toMatchObject({ cacheRead: 0.1 });
+  });
+
   it("uses Command’s stable and tiered pricing", () => {
     const costFor = (id: string) =>
       modelFromCatalogRecord({
@@ -344,9 +554,46 @@ describe("Command Code catalog conversion", () => {
       }).cost;
 
     const expectedCosts = {
-      "claude-sonnet-5-5": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+      "claude-sonnet-5-5": { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
       "claude-sonnet-5": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
       "claude-fable-5-1": { input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5 },
+      "claude-haiku-5-5": {
+        input: 0.1,
+        output: 0.5,
+        cacheRead: 0.01,
+        cacheWrite: 0.125,
+        tiers: [
+          {
+            inputTokensAbove: 100_000,
+            input: 0.5,
+            output: 2.5,
+            cacheRead: 0.05,
+            cacheWrite: 0.625,
+          },
+        ],
+      },
+      "moonshotai/Kimi-K3.1-Pro": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 0 },
+      "minimax/minimax-m3.1-flash": {
+        input: 0.15,
+        output: 0.6,
+        cacheRead: 0.015,
+        cacheWrite: 0,
+      },
+      "ornith/ornith-1.5-122b": { input: 0.16, output: 0.64, cacheRead: 0.02, cacheWrite: 0 },
+      "Qwen/Qwen3.8-Max-Prime": { input: 4, output: 12, cacheRead: 0.5, cacheWrite: 5 },
+      "google/gemini-4-argon": { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 0 },
+      "nvidia/nemotron-3.5-super-vl": {
+        input: 0.2,
+        output: 0.5,
+        cacheRead: 0.04,
+        cacheWrite: 0,
+      },
+      "stealth/glyph-cluster:free": { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      "reflection/beam:free": { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      "inclusionai/ling-3.1-flash": { input: 0.3, output: 0.9, cacheRead: 0.06, cacheWrite: 0 },
+      "meta/muse-spark-open": { input: 1.25, output: 4.25, cacheRead: 0.15, cacheWrite: 0 },
+      "meta/muse-wonder-1.0": { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 0 },
+      "mistral/mistral-large-4": { input: 1.36, output: 4.18, cacheRead: 0.14, cacheWrite: 0 },
       "claude-opus-5-5": { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 },
       "gpt-6-astra": {
         input: 10,
@@ -445,8 +692,6 @@ describe("Command Code catalog conversion", () => {
         cacheWrite: 0,
       },
       "xiaomi/mimo-v2.6-flash": { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0 },
-      "xiaomi/mimo-v2.5-pro": { input: 0.435, output: 0.87, cacheRead: 0.0036, cacheWrite: 0 },
-      "xiaomi/mimo-v2.5": { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0 },
       "Qwen/Qwen3.8-Omni-Flash": { input: 0.15, output: 0.47, cacheRead: 0.016, cacheWrite: 0 },
       "Qwen/Qwen3.8-Max-0902": { input: 2, output: 6, cacheRead: 0.25, cacheWrite: 0 },
       "z-ai/glm-5.3-flash": { input: 0.15, output: 0.5, cacheRead: 0.03, cacheWrite: 0 },
@@ -482,20 +727,6 @@ describe("Command Code catalog conversion", () => {
         output: 7.5,
         cacheRead: 0.15,
         cacheWrite: 0.08334,
-      },
-      "stealth/space-bunny-alpha": { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      "stealth/pixel-canary": { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      "inclusionai/ling-3.0-flash-sante:free": {
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
-      },
-      "inclusionai/ling-3.1-flash:free": {
-        input: 0,
-        output: 0,
-        cacheRead: 0,
-        cacheWrite: 0,
       },
       "meta/muse-spark-1.3": { input: 1.25, output: 4.25, cacheRead: 0.15, cacheWrite: 0 },
       "meta/muse-spark-1.3-contributor": {
@@ -643,7 +874,7 @@ describe("Command Code catalog conversion", () => {
       name: "Command Code",
       baseUrl: "https://api.commandcode.ai/provider/v1",
     });
-    expect(provider.getModels()).toHaveLength(86);
+    expect(provider.getModels()).toHaveLength(93);
     expect(new Set(provider.getModels().map((model) => model.api))).toEqual(
       new Set(["anthropic-messages", "openai-completions", "openai-responses"]),
     );
@@ -735,7 +966,119 @@ describe("Command Code registration", () => {
   });
 });
 
+describe("Command Code Flash inference", () => {
+  const efforts = ["low", "medium", "high", "xhigh", "max"] as const;
+
+  it.each(efforts)("sends raw Flash reasoning effort %s", async (effort) => {
+    const provider = createCommandCodeProvider();
+    const flash = flashFor(provider);
+    const { request, result } = await runFlashStream(provider, flash, "stream", {
+      reasoningEffort: effort,
+      maxTokens: flash.maxTokens,
+    });
+
+    expect(request.url).toBe("https://api.commandcode.ai/provider/v1/chat/completions");
+    expectFlashRequestBody((await request.json()) as Record<string, unknown>, effort);
+    expectFlashUsage(result);
+  });
+
+  it.each(efforts)("sends simple Flash reasoning %s with the model output cap", async (effort) => {
+    const provider = createCommandCodeProvider();
+    const { request, result } = await runFlashStream(provider, flashFor(provider), "simple", {
+      reasoning: effort,
+    });
+
+    expect(request.url).toBe("https://api.commandcode.ai/provider/v1/chat/completions");
+    expectFlashRequestBody((await request.json()) as Record<string, unknown>, effort);
+    expectFlashUsage(result);
+  });
+
+  it("clamps simple Flash minimal reasoning to low", async () => {
+    const provider = createCommandCodeProvider();
+    const { request, result } = await runFlashStream(provider, flashFor(provider), "simple", {
+      reasoning: "minimal",
+    });
+
+    expectFlashRequestBody((await request.json()) as Record<string, unknown>, "low");
+    expectFlashUsage(result);
+  });
+
+  it("omits Flash effort when simple reasoning is omitted", async () => {
+    const provider = createCommandCodeProvider();
+    const { request, result } = await runFlashStream(provider, flashFor(provider), "simple");
+
+    expectFlashRequestBody((await request.json()) as Record<string, unknown>);
+    expectFlashUsage(result);
+  });
+
+  it("sends no effort for a non-Flash Completions model", async () => {
+    const provider = createCommandCodeProvider();
+    const model = flashFor(provider, "deepseek/deepseek-v4-flash");
+    expect(model.compat?.supportsReasoningEffort).toBe(false);
+
+    const { request, result } = await runFlashStream(provider, model, "stream", {
+      reasoningEffort: "high",
+      maxTokens: model.maxTokens,
+    });
+    const body = (await request.json()) as Record<string, unknown>;
+
+    expect(body.model).toBe("deepseek/deepseek-v4-flash");
+    expect(body).not.toHaveProperty("reasoning_effort");
+    expect(body.max_tokens).toBe(32_768);
+    expectFlashUsage(result);
+  });
+
+  it("streams refreshed Flash with its local controls", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(commandCodeModelsFixture));
+    const { models } = await createRefreshModels();
+    const result = await models.refresh({ providers: ["command-code"], force: true });
+    expect(result.errors.size).toBe(0);
+
+    const provider = models.getProvider("command-code") as ReturnType<
+      typeof createCommandCodeProvider
+    >;
+    const flash = flashFor(provider);
+    const streamed = await runFlashStream(provider, flash, "stream", {
+      reasoningEffort: "max",
+      maxTokens: flash.maxTokens,
+    });
+
+    expectFlashRequestBody((await streamed.request.json()) as Record<string, unknown>, "max");
+    expectFlashUsage(streamed.result);
+  });
+});
+
 describe("Command Code live catalog", () => {
+  it("publishes models whose IDs match inherited object properties", async () => {
+    const ids = ["constructor", "toString", "__proto__"];
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      jsonResponse({
+        object: "list",
+        data: ids.map((id) => ({
+          id,
+          name: "Unknown Gateway Model",
+          context_length: 32_000,
+          supported_endpoints: ["/chat/completions"],
+        })),
+      }),
+    );
+    const { models, modelsStore } = await createRefreshModels();
+
+    const result = await models.refresh({ providers: ["command-code"], force: true });
+
+    expect(result.errors.size).toBe(0);
+    expect(models.getModels("command-code").map((model) => model.id)).toEqual(ids);
+    expect((await modelsStore.read("command-code"))?.models).toEqual(
+      ids.map((id) =>
+        expect.objectContaining({
+          id,
+          input: ["text"],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        }),
+      ),
+    );
+  });
+
   it("fetches the default Command Code models URL", async () => {
     const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(validPayload));
     const { models } = await createRefreshModels();
@@ -856,6 +1199,58 @@ describe("Command Code live catalog", () => {
     expect(stored?.checkedAt).toEqual(expect.any(Number));
   });
 
+  it("refreshes the captured fixture with local Flash capabilities", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(jsonResponse(commandCodeModelsFixture));
+    const { models, modelsStore } = await createRefreshModels();
+
+    const result = await models.refresh({ providers: ["command-code"], force: true });
+
+    expect(result.errors.size).toBe(0);
+    expect(
+      models
+        .getModels("command-code")
+        .map((model) => model.id)
+        .sort(),
+    ).toEqual(fixtureChatRecords.map((record) => record.id).sort());
+    const flash = models.getModel("command-code", FLASH_MODEL_ID) as Model<"openai-completions">;
+    expect(flash).toMatchObject({
+      api: "openai-completions",
+      input: ["text", "image"],
+      reasoning: true,
+      maxTokens: 32_768,
+      cost: { input: 0.15, output: 0.6, cacheRead: 0.015, cacheWrite: 0 },
+      compat: { supportsReasoningEffort: true, maxTokensField: "max_tokens" },
+    });
+    expect(flash.thinkingLevelMap).toEqual({
+      off: null,
+      minimal: null,
+      low: "low",
+      medium: "medium",
+      high: "high",
+      xhigh: "xhigh",
+      max: "max",
+    });
+    const storedFlash = (await modelsStore.read("command-code"))?.models.find(
+      (model) => model.id === FLASH_MODEL_ID,
+    );
+    expect(storedFlash).toMatchObject({
+      id: FLASH_MODEL_ID,
+      reasoning: true,
+      input: ["text", "image"],
+      cost: { input: 0.15, output: 0.6, cacheRead: 0.015, cacheWrite: 0 },
+      compat: { supportsReasoningEffort: true, maxTokensField: "max_tokens" },
+      thinkingLevelMap: {
+        off: null,
+        minimal: null,
+        low: "low",
+        medium: "medium",
+        high: "high",
+        xhigh: "xhigh",
+        max: "max",
+      },
+    });
+  });
+
   it("parses and persists optional Command Code metadata", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       jsonResponse({
@@ -900,6 +1295,13 @@ describe("Command Code live catalog", () => {
             supported_endpoints: ["/messages"],
             modalities: {},
           },
+          {
+            id: FLASH_MODEL_ID,
+            name: "MiniMax M3.1 Flash",
+            context_length: 1_000_000,
+            supported_endpoints: ["/chat/completions"],
+            modalities: {},
+          },
         ],
       }),
     );
@@ -909,6 +1311,22 @@ describe("Command Code live catalog", () => {
 
     expect(models.getModel("command-code", "claude-sonnet-5")).toMatchObject({
       input: ["text", "image"],
+    });
+    expect(models.getModel("command-code", FLASH_MODEL_ID)).toMatchObject({
+      api: "openai-completions",
+      input: ["text", "image"],
+      reasoning: true,
+      cost: { input: 0.15, output: 0.6, cacheRead: 0.015, cacheWrite: 0 },
+      compat: { supportsReasoningEffort: true },
+      thinkingLevelMap: {
+        off: null,
+        minimal: null,
+        low: "low",
+        medium: "medium",
+        high: "high",
+        xhigh: "xhigh",
+        max: "max",
+      },
     });
   });
 
@@ -1197,10 +1615,16 @@ describe("Command Code live catalog", () => {
             context_length: 32_000,
             supported_endpoints: ["/future"],
           },
+          {
+            id: "typesafe/jev",
+            name: "Jev",
+            context_length: 32_000,
+            supported_endpoints: ["/system-one"],
+          },
         ],
       }),
     );
-    const { models } = await createRefreshModels();
+    const { models, modelsStore } = await createRefreshModels();
 
     await models.refresh({ providers: ["command-code"], force: true });
 
@@ -1209,6 +1633,10 @@ describe("Command Code live catalog", () => {
       api: "openai-responses",
     });
     expect(models.getModel("command-code", "unknown-endpoint")).toBeUndefined();
+    expect(models.getModel("command-code", "typesafe/jev")).toBeUndefined();
+    expect((await modelsStore.read("command-code"))?.models).not.toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "typesafe/jev" })]),
+    );
   });
 
   it("removes a bundled model that no longer advertises a chat endpoint", async () => {
@@ -1261,6 +1689,44 @@ describe("Command Code live catalog", () => {
     expect(fetch).not.toHaveBeenCalled();
     expect(models.getModel("command-code", cached.id)).toEqual(cached);
     expect(models.getModel("command-code", "claude-sonnet-5")).toBeUndefined();
+  });
+
+  it("keeps bundled Flash hidden offline until a successful catalog refresh", async () => {
+    const fetch = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(jsonResponse(commandCodeModelsFixture));
+    const { models, modelsStore, cached } = await createStoredRefreshModels(Date.now());
+
+    await models.refresh({ providers: ["command-code"], allowNetwork: false });
+
+    expect(fetch).not.toHaveBeenCalled();
+    expect(models.getModel("command-code", cached.id)).toEqual(cached);
+    expect(models.getModel("command-code", FLASH_MODEL_ID)).toBeUndefined();
+
+    const result = await models.refresh({ providers: ["command-code"], force: true });
+
+    expect(result.errors.size).toBe(0);
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(models.getModel("command-code", cached.id)).toBeUndefined();
+    const expectedFlash = {
+      id: FLASH_MODEL_ID,
+      api: "openai-completions",
+      compat: { supportsReasoningEffort: true },
+      thinkingLevelMap: {
+        off: null,
+        minimal: null,
+        low: "low",
+        medium: "medium",
+        high: "high",
+        xhigh: "xhigh",
+        max: "max",
+      },
+    };
+    expect(models.getModel("command-code", FLASH_MODEL_ID)).toMatchObject(expectedFlash);
+    const storedFlash = (await modelsStore.read("command-code"))?.models.find(
+      (model) => model.id === FLASH_MODEL_ID,
+    );
+    expect(storedFlash).toMatchObject(expectedFlash);
   });
 
   it("migrates legacy output limits without capping versioned explicit limits", async () => {
@@ -1352,14 +1818,14 @@ describe("Command Code live catalog", () => {
     const failed = await first.models.refresh({ providers: ["command-code"] });
 
     expect(failed.errors.get("command-code")).toBeInstanceOf(Error);
-    expect(first.models.getModels("command-code")).toHaveLength(86);
+    expect(first.models.getModels("command-code")).toHaveLength(93);
     expect(await modelsStore.read("command-code")).toMatchObject({ models: [] });
 
     const restarted = await createRefreshModels(modelsStore);
     await restarted.models.refresh({ providers: ["command-code"] });
 
     expect(fetch).toHaveBeenCalledOnce();
-    expect(restarted.models.getModels("command-code")).toHaveLength(86);
+    expect(restarted.models.getModels("command-code")).toHaveLength(93);
   });
 
   it("fetches and stores a fresh catalog when forced", async () => {
