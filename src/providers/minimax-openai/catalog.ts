@@ -1,8 +1,7 @@
 // src/providers/minimax-openai/catalog.ts
 
 import type { Api, Model, RefreshModelsContext } from "@earendil-works/pi-ai";
-import type { ProviderConfig, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
-import { MINIMAX_MODELS } from "./models.ts";
+import { MINIMAX_MODELS, type MiniMaxModelConfig } from "./models.ts";
 
 const CATALOG_REFRESH_INTERVAL_MS = 4 * 60 * 60 * 1000;
 const DISCOVERY_TIMEOUT_MS = 10_000;
@@ -14,12 +13,12 @@ const PERSISTENCE_FAILED_MESSAGE = "MiniMax model persistence failed";
 type StoredCatalog = NonNullable<RefreshModelsContext["stored"]>;
 
 type RestoredCatalog = {
-  models: ProviderModelConfig[];
+  models: MiniMaxModelConfig[];
   compatible: boolean;
   checkedAt?: number;
 };
 
-function cloneDefinitions(definitions: readonly ProviderModelConfig[]): ProviderModelConfig[] {
+function cloneDefinitions(definitions: readonly MiniMaxModelConfig[]): MiniMaxModelConfig[] {
   return definitions.map((definition) => structuredClone(definition));
 }
 
@@ -100,7 +99,7 @@ function liveModelIds(value: unknown): string[] {
 }
 
 function canonicalModel(
-  definition: ProviderModelConfig,
+  definition: MiniMaxModelConfig,
   providerId: string,
   baseUrl: string,
 ): Model<Api> {
@@ -129,9 +128,9 @@ async function discoverModels(
   context: RefreshModelsContext,
   providerId: string,
   baseUrl: string,
-  prior: ProviderModelConfig[],
+  prior: MiniMaxModelConfig[],
   apiKey: string,
-): Promise<ProviderModelConfig[]> {
+): Promise<MiniMaxModelConfig[]> {
   const signal = AbortSignal.any([context.signal, AbortSignal.timeout(DISCOVERY_TIMEOUT_MS)]);
 
   let response: Response;
@@ -184,7 +183,7 @@ async function discoverModels(
 export function createMiniMaxModelRefresh(
   providerId: string,
   baseUrl: string,
-): NonNullable<ProviderConfig["refreshModels"]> {
+): (context: RefreshModelsContext) => Promise<MiniMaxModelConfig[]> {
   return async (context) => {
     context.signal.throwIfAborted();
 

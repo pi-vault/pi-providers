@@ -3,6 +3,7 @@ import {
   InMemoryCredentialStore,
   InMemoryModelsStore,
   type Api,
+  type AnyModel,
   type Model,
   normalizeContext,
 } from "@earendil-works/pi-ai";
@@ -1729,6 +1730,44 @@ describe("Command Code live catalog", () => {
     expect(storedFlash).toMatchObject(expectedFlash);
   });
 
+  it("leaves non-chat models unchanged when migrating legacy output limits", async () => {
+    const modelsStore = new InMemoryModelsStore();
+    const nonChatModels: AnyModel[] = [
+      {
+        id: "typesafe/jev",
+        name: "Jev",
+        type: "classifier",
+        api: "typesafe-system-one",
+        provider: "command-code",
+        baseUrl: "https://api.commandcode.ai/provider/v1",
+        input: ["text"],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 64_000,
+      },
+      {
+        id: "image-model",
+        name: "Image Model",
+        type: "image",
+        api: "openai-images",
+        provider: "command-code",
+        baseUrl: "https://api.commandcode.ai/provider/v1",
+        input: ["text"],
+        output: ["image"],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      },
+    ];
+    await modelsStore.write("command-code", {
+      models: [cachedLiveOnlyModel(), ...nonChatModels],
+      checkedAt: Date.now(),
+    });
+
+    const { models } = await createRefreshModels(modelsStore);
+    await models.refresh({ providers: ["command-code"], allowNetwork: false });
+
+    const stored = await modelsStore.read("command-code");
+    expect(stored?.models.filter((model) => model.type !== undefined)).toEqual(nonChatModels);
+  });
+
   it("migrates legacy output limits without capping versioned explicit limits", async () => {
     const modelsStore = new InMemoryModelsStore();
     const legacyModel = {
@@ -1744,7 +1783,9 @@ describe("Command Code live catalog", () => {
     await legacy.models.refresh({ providers: ["command-code"], allowNetwork: false });
 
     expect(legacy.models.getModel("command-code", legacyModel.id)?.maxTokens).toBe(32_768);
-    expect((await modelsStore.read("command-code"))?.models[0]?.maxTokens).toBe(32_768);
+    expect((await modelsStore.read("command-code"))?.models[0]).toMatchObject({
+      maxTokens: 32_768,
+    });
 
     const versionedModel = { ...legacyModel, maxTokens: 393_216 };
     const versionedEntry = {

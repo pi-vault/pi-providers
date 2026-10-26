@@ -3,7 +3,7 @@
 import { validateToolArguments } from "@earendil-works/pi-ai";
 import type {
   ExtensionAPI,
-  ExtensionContext,
+  ExtensionToolContext,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type { TSchema } from "typebox";
@@ -121,7 +121,7 @@ function createHarness(options: HarnessOptions = {}) {
         ? options.commandKey
         : undefined,
   );
-  const ctx = { modelRegistry: { getApiKeyForProvider } } as unknown as ExtensionContext;
+  const ctx = { modelRegistry: { getApiKeyForProvider } } as unknown as ExtensionToolContext;
 
   return { tool: registerTool.mock.calls[0]?.[0] as Captured, getApiKeyForProvider, ctx };
 }
