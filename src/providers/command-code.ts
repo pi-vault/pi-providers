@@ -1,3 +1,4 @@
+import { isModelType } from "@earendil-works/pi-ai";
 import {
   anthropicMessagesApi,
   createProvider,
@@ -48,7 +49,7 @@ function migrateStoredCatalog(stored: RefreshModelsContext["stored"]) {
     stored: versionedCatalogEntry({
       ...versioned,
       models: versioned.models.map((model) =>
-        model.provider === "command-code"
+        model.provider === "command-code" && isModelType(model, "chat")
           ? {
               ...model,
               maxTokens: Math.min(COMMAND_CODE_FALLBACK_MAX_TOKENS, model.contextWindow),

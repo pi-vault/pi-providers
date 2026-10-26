@@ -22,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Refreshed the bundled Command Code catalog to 93 models captured 2026-10-25. Added 13 records and removed six retired or renamed ones, including the retired free Ling and stealth aliases; paid `inclusionai/ling-3.1-flash` keeps its own nonzero rates.
 - Refreshed dated Command Code costs, including new exact-ID rates, Haiku 5.5 context tiers, and the retained Sonnet 5.5 cache-read estimate. Live metadata still overrides local capabilities and pricing.
 - Updated development dependencies after checking npm publication timestamps against a 48-hour cutoff: `@biomejs/biome` to `^2.6.2`, `@types/node` to `^26.6.5`, `typebox` to `^1.4.3`, and `vitest` to `^5.0.5`. Biome `2.6.3` was too recent, so the preceding release was selected and the configuration schema was updated to match. TypeScript remains at the latest stable `^7.0.2`.
-- Retained the Pi development baseline at `^0.87.1`. The eligible `1.4.0` releases of `@earendil-works/pi-ai` and `@earendil-works/pi-coding-agent` passed runtime tests but introduced model-union and tool-context type incompatibilities; upgrading requires a separate compatibility change.
+- Updated `@earendil-works/pi-ai` and `@earendil-works/pi-coding-agent` to `^1.4.0` (published 2026-10-21), with peer dependencies requiring Pi 1.4.0 or newer. MiniMax declarations now use chat-specific model types, TypeSafe test contexts use the current tool context, and Command Code's legacy output-limit migration leaves classifier and image models unchanged.
 
 ### Fixed
 

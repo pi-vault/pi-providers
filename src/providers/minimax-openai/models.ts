@@ -3,6 +3,8 @@
 import type { ModelCost, OpenAICompletionsCompat, ThinkingLevelMap } from "@earendil-works/pi-ai";
 import type { ProviderModelConfig } from "@earendil-works/pi-coding-agent";
 
+export type MiniMaxModelConfig = Extract<ProviderModelConfig, { type?: "chat" }>;
+
 // Sources checked 2026-10-25:
 // - https://platform.minimax.io/docs/guides/ and
 //   https://platform.minimax.io/docs/api-reference/api-overview: 1,000,000-token context.
@@ -44,7 +46,7 @@ const M3_COST: ModelCost = {
   tiers: [{ inputTokensAbove: 512_000, input: 0.6, output: 2.4, cacheRead: 0.12, cacheWrite: 0 }],
 };
 
-export const MINIMAX_MODELS: readonly ProviderModelConfig[] = [
+export const MINIMAX_MODELS: readonly MiniMaxModelConfig[] = [
   {
     id: "MiniMax-M3.1-Flash",
     name: "MiniMax-M3.1-Flash",

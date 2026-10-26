@@ -5,7 +5,7 @@
 [![Node >= 24.15.0](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
 
-Register [MiniMax M3 and M3.1 Flash](https://www.minimax.io/), [StepFun Flash](https://stepfun.ai/), and [Command Code](https://commandcode.ai/) models as custom providers for [Pi](https://github.com/earendil-works/pi), and add a `typesafe_decide` tool for typed decision questions answered by [TypeSafe](https://typesafe.ai/) Jev. Command Code requires Pi 0.86 or newer.
+Register [MiniMax M3 and M3.1 Flash](https://www.minimax.io/), [StepFun Flash](https://stepfun.ai/), and [Command Code](https://commandcode.ai/) models as custom providers for [Pi](https://github.com/earendil-works/pi), and add a `typesafe_decide` tool for typed decision questions answered by [TypeSafe](https://typesafe.ai/) Jev. Requires Pi 1.4.0 or newer.
 
 ## Install, Upgrade, And Reload
 
@@ -195,7 +195,7 @@ Add a criteria-only Noul, an explicit-null Noul, a one-option Choice, and a one-
 
 ## Development And Verification
 
-Development uses Pi `0.87.1` as its compatibility baseline. Tooling updates are checked against npm publication timestamps and must be at least 48 hours old; this release uses Biome `2.6.2` because `2.6.3` was newer than that cutoff. Pi `1.4.0` requires model-union and tool-context type migration and is deferred.
+Development and peer dependencies use Pi `1.4.0` as the minimum compatibility baseline. Dependency updates are checked against npm publication timestamps and must be at least 48 hours old; this release uses Biome `2.6.2` because `2.6.3` was newer than that cutoff.
 
 ```bash
 pnpm install
