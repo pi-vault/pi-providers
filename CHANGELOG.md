@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 2026-10-25 - [0.5.0]
+
 ### Added
 
 - Authenticated MiniMax availability discovery for `minimax-openai` and `minimax-openai-cn`. Each region queries its own `${baseUrl}/models` endpoint with its own credential, filters the response to the curated supported IDs, treats an empty supported result as authoritative, persists the last successful catalog, restores it offline, and throttles successful checks for four hours. Failed checks retain the prior catalog and remain retryable; regions and caches stay independent.
@@ -19,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MiniMax native reasoning now keeps exact whitespace and signatures, preserves interleaved thinking/text/tool arrival order, and splits resumed runs when Pi reuses a base content index.
 - Refreshed the bundled Command Code catalog to 93 models captured 2026-10-25. Added 13 records and removed six retired or renamed ones, including the retired free Ling and stealth aliases; paid `inclusionai/ling-3.1-flash` keeps its own nonzero rates.
 - Refreshed dated Command Code costs, including new exact-ID rates, Haiku 5.5 context tiers, and the retained Sonnet 5.5 cache-read estimate. Live metadata still overrides local capabilities and pricing.
+- Updated development dependencies after checking npm publication timestamps against a 48-hour cutoff: `@biomejs/biome` to `^2.6.2`, `@types/node` to `^26.6.5`, `typebox` to `^1.4.3`, and `vitest` to `^5.0.5`. Biome `2.6.3` was too recent, so the preceding release was selected and the configuration schema was updated to match. TypeScript remains at the latest stable `^7.0.2`.
+- Retained the Pi development baseline at `^0.87.1`. The eligible `1.4.0` releases of `@earendil-works/pi-ai` and `@earendil-works/pi-coding-agent` passed runtime tests but introduced model-union and tool-context type incompatibilities; upgrading requires a separate compatibility change.
 
 ### Fixed
 

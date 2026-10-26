@@ -69,12 +69,16 @@ The Command Code provider uses the [Provider API](https://commandcode.ai/docs/pr
 
 `typesafe_decide` is a tool, not a selectable chat model, so it never appears in the model picker and never accepts a chat prompt. Pi calls it like any other tool — see [TypeSafe Decisions](#typesafe-decisions).
 
-## What's New In Unreleased
+## What's New In 0.5.0
 
 - **Authenticated MiniMax availability discovery** — both direct providers query their regional `/models` endpoint and keep only supported curated IDs. A successful empty result hides all direct models, the last successful catalog restores offline, and failures retain the prior catalog for retry. Regions use separate credentials and caches.
 - **Direct MiniMax M3.1 Flash and refreshed M3 metadata** — both regional providers now expose `MiniMax-M3.1-Flash` first and `MiniMax-M3` second, with 1,000,000-token context, a 524,288-token output ceiling through `max_completion_tokens`, standard pricing, and image input. M3 pricing doubles above 512,000 input tokens. `MiniMax-M2.7` and `MiniMax-M2.7-highspeed` are removed from these direct providers only.
 - **Reasoning continuity across tool rounds** — native `reasoning_content` keeps its exact whitespace and signature, interleaved thinking and text stay in arrival order, and unsigned thinking from saved same-model sessions is replayed as ordered `<think>` text for the next request.
 - **Flash effort controls** — `MiniMax-M3.1-Flash` exposes `low`, `medium`, `high`, `xhigh`, and `max`. Omitting effort sends no field and uses upstream's default; the simple path clamps `minimal` to `low`. M3 keeps automatic thinking.
+- **Refreshed Command Code catalog** — 93 bundled models captured 2026-10-25, with updated capabilities and dated prices, including paid Ling pricing distinct from retired free aliases.
+- **TypeSafe question compatibility and gateway limits** — optional or null instructions, criteria-only Noul questions, nullable Choice descriptions, and one-option Choice or one-level Score questions are accepted. Command Code requests enforce the 100-question limit before sending; direct TypeSafe requests keep their upstream limits.
+
+See [`CHANGELOG.md`](CHANGELOG.md) for the full release notes, including reasoning replay and catalog refresh fixes.
 
 ## What's New In 0.4.1
 
@@ -190,6 +194,8 @@ Add a criteria-only Noul, an explicit-null Noul, a one-option Choice, and a one-
 - **Deeply nested tool schemas.** The MiniMax API may produce collapsed nested arguments on complex JSON schemas; this has been observed with `MiniMax-M3`. The package emits a diagnostic message instead of retrying.
 
 ## Development And Verification
+
+Development uses Pi `0.87.1` as its compatibility baseline. Tooling updates are checked against npm publication timestamps and must be at least 48 hours old; this release uses Biome `2.6.2` because `2.6.3` was newer than that cutoff. Pi `1.4.0` requires model-union and tool-context type migration and is deferred.
 
 ```bash
 pnpm install
