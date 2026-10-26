@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Authenticated MiniMax availability discovery for `minimax-openai` and `minimax-openai-cn`. Each region queries its own `${baseUrl}/models` endpoint with its own credential, filters the response to the curated supported IDs, treats an empty supported result as authoritative, persists the last successful catalog, restores it offline, and throttles successful checks for four hours. Failed checks retain the prior catalog and remain retryable; regions and caches stay independent.
 - Direct `MiniMax-M3.1-Flash` on `minimax-openai` and `minimax-openai-cn` with text/image input, 1,000,000-token context, a 524,288-token output ceiling through `max_completion_tokens`, standard $0.15 / $0.60 / $0.015 input/output/cache-read rates, and the five supported thinking efforts (`low`, `medium`, `high`, `xhigh`, `max`). Omitted effort preserves upstream behavior, and the simple provider path clamps `minimal` to `low`.
 - Command Code `minimax/minimax-m3.1-flash` support with text and image input plus the five supported thinking efforts (`low`, `medium`, `high`, `xhigh`, `max`). Omitted effort preserves upstream behavior, and the simple provider path clamps `minimal` to `low`.
 
