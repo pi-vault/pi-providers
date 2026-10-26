@@ -386,6 +386,32 @@ describe("MiniMax discovery in the real Pi host", () => {
     expect(await host.modelsStore.read(GLOBAL.provider)).toBeUndefined();
   });
 
+  it("reports a timeout if catalog persistence finishes after the deadline", async () => {
+    vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(listResponse(["MiniMax-M3"]))
+      .mockResolvedValueOnce(listResponse(["MiniMax-M3.1-Flash"]));
+    const modelsStore = new InMemoryModelsStore();
+    const host = await createHost(modelsStore);
+    await host.runtime.refresh({ providers: [GLOBAL.provider], force: true });
+
+    const timeout = new AbortController();
+    vi.spyOn(AbortSignal, "timeout").mockReturnValue(timeout.signal);
+    const write = modelsStore.write.bind(modelsStore);
+    vi.spyOn(modelsStore, "write").mockImplementation(async (providerId, entry, options) => {
+      await write(providerId, entry, options);
+      timeout.abort();
+    });
+
+    const result = await host.runtime.refresh({ providers: [GLOBAL.provider], force: true });
+
+    expect(result.errors.get(GLOBAL.provider)?.message).toBe("MiniMax model discovery timed out");
+    expect(idsOf(host.runtime.getModels(GLOBAL.provider))).toEqual(["MiniMax-M3"]);
+    // Pi cannot roll back a store write that completed before the timeout check.
+    expect(idsOf((await modelsStore.read(GLOBAL.provider))?.models ?? [])).toEqual([
+      "MiniMax-M3.1-Flash",
+    ]);
+  });
+
   it("keeps prior catalog state when callback persistence throws", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(listResponse(["MiniMax-M3"]));
     const host = await createHost();

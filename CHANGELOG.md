@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- MiniMax discovery now reports a sanitized timeout when the deadline expires during catalog persistence, preserving the prior visible catalog instead of silently reporting a successful refresh.
 - MiniMax preserves spaces, line breaks, and code indentation when visible text resumes after native reasoning, including when replaying that answer in the next request.
 - MiniMax no longer trims reasoning fragments or deduplicates repeated prefixes, and no longer loses a reasoning signature when Pi delays `thinking_end` until after a text or tool boundary.
 - Replaying an older same-model MiniMax session now converts unsigned thinking blocks into ordered `<think>` text without mutating the stored transcript or rewriting signed/foreign history.

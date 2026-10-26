@@ -176,9 +176,9 @@ async function discoverModels(
     throw new Error(PERSISTENCE_FAILED_MESSAGE);
   }
 
-  if (!published) return prior;
-  if (context.signal.aborted || signal.aborted) return prior;
-  return candidates;
+  if (context.signal.aborted) return prior;
+  ensureActive(context.signal, signal);
+  return published ? candidates : prior;
 }
 
 export function createMiniMaxModelRefresh(

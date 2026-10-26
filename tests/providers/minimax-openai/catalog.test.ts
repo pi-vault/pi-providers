@@ -780,4 +780,29 @@ describe("MiniMax catalog failures and cancellation", () => {
     expect(timeoutSpy).toHaveBeenCalledWith(10_000);
     expect(publish).not.toHaveBeenCalled();
   });
+
+  it.each([true, false])(
+    "reports a timeout when persistence completes with %s after the deadline",
+    async (accepted) => {
+      const timeout = new AbortController();
+      vi.spyOn(AbortSignal, "timeout").mockReturnValue(timeout.signal);
+      vi.spyOn(globalThis, "fetch").mockResolvedValue(listResponse(["MiniMax-M3.1-Flash"]));
+      const { context } = fakeContext({
+        allowNetwork: true,
+        force: true,
+        stored: { models: [storedModel(GLOBAL, "MiniMax-M3")], checkedAt: 0 },
+        publish: async () => {
+          timeout.abort(new Error("sentinel-timeout-key"));
+          return accepted;
+        },
+      });
+
+      const error = await refreshFor(GLOBAL)(context).catch((cause: unknown) => cause);
+
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe("MiniMax model discovery timed out");
+      expect(String(error)).not.toContain("sentinel-timeout-key");
+      expect((error as Error).cause).toBeUndefined();
+    },
+  );
 });
