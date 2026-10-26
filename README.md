@@ -71,6 +71,7 @@ The Command Code provider uses the [Provider API](https://commandcode.ai/docs/pr
 
 ## What's New In Unreleased
 
+- **Authenticated MiniMax availability discovery** — both direct providers query their regional `/models` endpoint and keep only supported curated IDs. A successful empty result hides all direct models, the last successful catalog restores offline, and failures retain the prior catalog for retry. Regions use separate credentials and caches.
 - **Direct MiniMax M3.1 Flash and refreshed M3 metadata** — both regional providers now expose `MiniMax-M3.1-Flash` first and `MiniMax-M3` second, with 1,000,000-token context, a 524,288-token output ceiling through `max_completion_tokens`, standard pricing, and image input. M3 pricing doubles above 512,000 input tokens. `MiniMax-M2.7` and `MiniMax-M2.7-highspeed` are removed from these direct providers only.
 - **Reasoning continuity across tool rounds** — native `reasoning_content` keeps its exact whitespace and signature, interleaved thinking and text stay in arrival order, and unsigned thinking from saved same-model sessions is replayed as ordered `<think>` text for the next request.
 - **Flash effort controls** — `MiniMax-M3.1-Flash` exposes `low`, `medium`, `high`, `xhigh`, and `max`. Omitting effort sends no field and uses upstream's default; the simple path clamps `minimal` to `low`. M3 keeps automatic thinking.
@@ -111,6 +112,8 @@ API bases:
 Direct MiniMax models use standard service pricing. `MiniMax-M3` doubles to $0.60 / $2.40 / $0.12 per 1M input / output / cache-read tokens above 512,000 input tokens. Both models cap output at 524,288 tokens within the 1,000,000-token context and send `max_completion_tokens`. Cache writes are free for both direct MiniMax models and for all `stepfun-ai` models.
 
 `MiniMax-M3.1-Flash` exposes the five supported thinking efforts: `low`, `medium`, `high`, `xhigh`, and `max`. Omitting effort sends no `reasoning_effort` field and preserves upstream's maximum default. On the simple provider path, `minimal` clamps to `low`. `MiniMax-M3` keeps automatic thinking without an effort or disable control. `MiniMax-M2.7` and `MiniMax-M2.7-highspeed` are no longer bundled by the direct providers; historical changelog entries remain.
+
+**Availability discovery.** Both direct MiniMax providers require the regional API key before querying `${baseUrl}/models`. The initial catalog is the curated two-model baseline. A validated response filters availability to curated IDs in curated order: IDs that are not part of the supported catalog are ignored, and a successful response with no supported IDs authoritatively hides every direct MiniMax model. New upstream IDs appear only after this package adds their curated metadata. Pi persists successful results per provider and restores that subset or empty result offline, so global and China caches never cross. Successful checks stay fresh for four hours; failures keep the prior catalog and remain retryable without writing a failed-check timestamp. An SDK caller can force an online check with `ModelRuntime.refresh({ providers: ["minimax-openai"], allowNetwork: true, force: true })` (or `minimax-openai-cn`). China `/v1/models` parity is assumed but has not been verified against a live authenticated endpoint; a failure in one region leaves the other region unchanged.
 
 ## TypeSafe Decisions
 

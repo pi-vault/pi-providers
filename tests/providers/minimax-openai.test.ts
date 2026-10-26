@@ -103,6 +103,16 @@ describe("registerMiniMax", () => {
     expect(typeof config.streamSimple).toBe("function");
   });
 
+  it("provides a distinct refresh callback per region", () => {
+    const registerProvider = registerProviders();
+
+    const global = registration(registerProvider, "minimax-openai");
+    const china = registration(registerProvider, "minimax-openai-cn");
+    expect(typeof global.refreshModels).toBe("function");
+    expect(typeof china.refreshModels).toBe("function");
+    expect(global.refreshModels).not.toBe(china.refreshModels);
+  });
+
   it("registers Flash first and M3 second with the curated contract", () => {
     const registerProvider = registerProviders();
 

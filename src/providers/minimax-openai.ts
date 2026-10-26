@@ -9,6 +9,7 @@ import type {
 } from "@earendil-works/pi-ai";
 import { getApiProvider } from "@earendil-works/pi-ai/compat";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { createMiniMaxModelRefresh } from "./minimax-openai/catalog.ts";
 import { cleanStream } from "./minimax-openai/clean-stream.ts";
 import { hardenToolCalls } from "./minimax-openai/harden-tool-calls.ts";
 import { MINIMAX_MODELS } from "./minimax-openai/models.ts";
@@ -39,6 +40,7 @@ function registerMiniMaxVariant(
       return cleanStream(hardenToolCalls(base));
     },
     models: structuredClone([...MINIMAX_MODELS]),
+    refreshModels: createMiniMaxModelRefresh(name, baseUrl),
   });
 }
 
