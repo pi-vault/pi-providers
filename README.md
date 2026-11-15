@@ -5,7 +5,7 @@
 [![Node >= 24.15.0](https://img.shields.io/badge/node-%3E%3D24.15.0-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
 
-Register [MiniMax M3 and M3.1 Flash](https://www.minimax.io/), [StepFun Flash](https://stepfun.ai/), and [Command Code](https://commandcode.ai/) models as custom providers for [Pi](https://github.com/earendil-works/pi), and add a `typesafe_decide` tool for typed decision questions answered by [TypeSafe](https://typesafe.ai/) Jev. Requires Pi 1.4.0 or newer.
+Register [MiniMax M3 and M3.1 Flash](https://www.minimax.io/), [StepFun Flash](https://stepfun.ai/), and [Command Code](https://commandcode.ai/) models as custom providers for [Pi](https://github.com/earendil-works/pi), and add a `typesafe_decide` tool for typed decision questions answered by [TypeSafe](https://typesafe.ai/) Jev. Requires Pi 1.5.2 or newer.
 
 ## Install, Upgrade, And Reload
 
@@ -68,6 +68,13 @@ Ask Pi normally; there is no provider-specific prompt syntax. Image input works 
 The Command Code provider uses the [Provider API](https://commandcode.ai/docs/provider). GOAT membership can use the same API, but access and usage limits follow the current [GOAT plan](https://commandcode.ai/docs/plans/goat) and [pricing and limits](https://commandcode.ai/docs/resources/pricing-limits). This package does not calculate subscription entitlements or included credits.
 
 `typesafe_decide` is a tool, not a selectable chat model, so it never appears in the model picker and never accepts a chat prompt. Pi calls it like any other tool — see [TypeSafe Decisions](#typesafe-decisions).
+
+## What's New In 0.6.0
+
+- **No refresh warning for an unconfigured MiniMax region** — opening the model selector no longer reports `Could not refresh minimax-openai-cn` (or `minimax-openai`) when that region has no `/login` key and no environment variable. Configured regions keep discovery, caching, and stream hardening.
+- **Pi 1.5.2 baseline** — the package now requires Pi 1.5.2 or newer, and development tooling is refreshed.
+
+See [`CHANGELOG.md`](CHANGELOG.md) for the full release notes.
 
 ## What's New In 0.5.0
 
@@ -195,7 +202,7 @@ Add a criteria-only Noul, an explicit-null Noul, a one-option Choice, and a one-
 
 ## Development And Verification
 
-Development and peer dependencies use Pi `1.4.0` as the minimum compatibility baseline. Dependency updates are checked against npm publication timestamps and must be at least 48 hours old; this release uses Biome `2.6.2` because `2.6.3` was newer than that cutoff.
+Development and peer dependencies use Pi `1.5.2` as the minimum compatibility baseline. Dependency updates are checked against npm publication timestamps and must be at least 48 hours old; this release uses Biome `2.6.7` because `2.6.8` was newer than that cutoff.
 
 ```bash
 pnpm install

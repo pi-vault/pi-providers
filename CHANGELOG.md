@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 2026-11-15 - [0.6.0]
+
+### Changed
+
+- Pi 1.5.2 is now the minimum supported version, and the development baseline for `@earendil-works/pi-ai` and `@earendil-works/pi-coding-agent` is `^1.5.2` (published 2026-11-10). No source changes were required.
+- Updated development dependencies after checking npm publication timestamps against a 48-hour cutoff: `@biomejs/biome` to `^2.6.7`, `@types/node` to `^26.6.6`, `typebox` to `^1.4.7`, and `vitest` to `^5.1.0`. Biome `2.6.8` was too recent, so the preceding release was selected and the configuration schema was updated to match. TypeScript remains at the latest stable `^7.0.2`.
+
 ### Fixed
 
 - Opening the model selector no longer shows `Could not refresh minimax-openai-cn; showing cached models.` (or the same warning for `minimax-openai`) when that region has no key. The MiniMax regions are now native providers that treat a missing key as not configured, so Pi skips their catalog refresh instead of failing on the unset environment variable. Configured regions keep their discovery, four-hour throttle, regional caches, and stream hardening.
