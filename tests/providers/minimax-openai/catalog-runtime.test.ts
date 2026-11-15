@@ -5,13 +5,17 @@ import {
   InMemoryModelsStore,
   type Model,
   type ModelsStore,
+  type Provider,
   type ModelsStoreEntry,
   type ModelsStoreOperationOptions,
   normalizeContext,
 } from "@earendil-works/pi-ai";
 import { getApiProvider } from "@earendil-works/pi-ai/compat";
-import type { ExtensionAPI, ProviderConfig } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { registerMiniMax } from "../../../src/providers/minimax-openai.ts";
 
@@ -76,6 +80,21 @@ function simpleResponse(model: string): Response {
   );
 }
 
+function cachedRecord(region: (typeof REGIONS)[number], id: string): Model<never> {
+  return {
+    id,
+    name: id,
+    provider: region.provider,
+    baseUrl: region.baseUrl,
+    api: region.provider,
+    reasoning: true,
+    input: ["text", "image"],
+    cost: { input: 0.3, output: 1.2, cacheRead: 0.06, cacheWrite: 0 },
+    contextWindow: 1_000_000,
+    maxTokens: 524_288,
+  } as unknown as Model<never>;
+}
+
 function idsOf(models: readonly { id: string }[]): string[] {
   return models.map((model) => model.id);
 }
@@ -84,35 +103,42 @@ type Host = {
   runtime: ModelRuntime;
   modelsStore: ModelsStore;
   credentials: InMemoryCredentialStore;
-  configs: Map<string, ProviderConfig>;
+  providers: Map<string, Provider>;
 };
 
-async function createHost(modelsStore: ModelsStore = new InMemoryModelsStore()): Promise<Host> {
+type HostOptions = { credentials?: boolean; modelsPath?: string };
+
+async function createHost(
+  modelsStore: ModelsStore = new InMemoryModelsStore(),
+  options: HostOptions = {},
+): Promise<Host> {
   const credentials = new InMemoryCredentialStore();
-  for (const region of REGIONS) {
-    await credentials.modify(region.provider, async () => ({
-      type: "api_key",
-      key: `${region.provider}-test-key`,
-    }));
+  if (options.credentials !== false) {
+    for (const region of REGIONS) {
+      await credentials.modify(region.provider, async () => ({
+        type: "api_key",
+        key: `${region.provider}-test-key`,
+      }));
+    }
   }
 
   const runtime = await ModelRuntime.create({
     credentials,
     modelsStore,
-    modelsPath: null,
+    modelsPath: options.modelsPath ?? null,
     allowModelNetwork: false,
     refreshOnCreate: false,
   });
-  const configs = new Map<string, ProviderConfig>();
+  const providers = new Map<string, Provider>();
   const pi = {
-    registerProvider(providerId: string, config: ProviderConfig) {
-      configs.set(providerId, config);
-      runtime.registerProvider(providerId, config);
+    registerProvider(provider: Provider) {
+      providers.set(provider.id, provider);
+      runtime.registerNativeProvider(provider);
     },
   } as unknown as ExtensionAPI;
 
   registerMiniMax(pi);
-  return { runtime, modelsStore, credentials, configs };
+  return { runtime, modelsStore, credentials, providers };
 }
 
 function wrapPersistence(
@@ -120,11 +146,11 @@ function wrapPersistence(
   providerId: string,
   publish: (publication: unknown) => Promise<boolean>,
 ) {
-  const config = host.configs.get(providerId);
-  if (!config?.refreshModels) throw new Error(`Missing refresh callback for ${providerId}`);
-  const original = config.refreshModels;
-  host.runtime.registerProvider(providerId, {
-    ...config,
+  const provider = host.providers.get(providerId);
+  if (!provider?.refreshModels) throw new Error(`Missing refresh callback for ${providerId}`);
+  const original = provider.refreshModels.bind(provider);
+  host.runtime.registerNativeProvider({
+    ...provider,
     refreshModels: (context) =>
       original({
         ...context,
@@ -199,6 +225,127 @@ afterEach(() => {
 });
 
 describe("MiniMax discovery in the real Pi host", () => {
+  it("reports no error and fetches nothing for regions without a key", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch");
+    const modelsStore = new InMemoryModelsStore();
+    await modelsStore.write(CHINA.provider, {
+      models: [cachedRecord(CHINA, "MiniMax-M3")],
+      checkedAt: 0,
+    });
+    const host = await createHost(modelsStore, { credentials: false });
+
+    const result = await host.runtime.refresh({
+      providers: [GLOBAL.provider, CHINA.provider],
+      allowNetwork: true,
+    });
+
+    expect(result.errors.size).toBe(0);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(idsOf(host.runtime.getModels(CHINA.provider))).toEqual(["MiniMax-M3"]);
+    expect(idsOf(host.runtime.getModels(GLOBAL.provider))).toEqual(BASELINE);
+    expect(await host.runtime.checkAuth(CHINA.provider)).toBeUndefined();
+  });
+
+  it("reports no error for the full catalog refresh without any MiniMax key", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("offline"));
+    const host = await createHost(undefined, { credentials: false });
+
+    const result = await host.runtime.refresh({ allowNetwork: true });
+
+    expect([...result.errors.keys()].filter((id) => id.startsWith("minimax-openai"))).toEqual([]);
+  });
+
+  it("discovers only the region whose env var is set", async () => {
+    vi.stubEnv(CHINA.env, "cn-env-key");
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(listResponse(["MiniMax-M3"]));
+    const host = await createHost(undefined, { credentials: false });
+
+    const result = await host.runtime.refresh({
+      providers: [GLOBAL.provider, CHINA.provider],
+      allowNetwork: true,
+    });
+
+    expect(result.errors.size).toBe(0);
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(String(fetch.mock.calls[0]?.[0])).toBe("https://api.minimaxi.com/v1/models");
+    expect(
+      new Headers((fetch.mock.calls[0]?.[1] as RequestInit | undefined)?.headers ?? {}).get(
+        "authorization",
+      ),
+    ).toBe("Bearer cn-env-key");
+    expect(idsOf(host.runtime.getModels(CHINA.provider))).toEqual(["MiniMax-M3"]);
+    expect(idsOf(host.runtime.getModels(GLOBAL.provider))).toEqual(BASELINE);
+  });
+
+  it("treats a whitespace-only env var as unset", async () => {
+    vi.stubEnv(CHINA.env, "   ");
+    const fetch = vi.spyOn(globalThis, "fetch");
+    const host = await createHost(undefined, { credentials: false });
+
+    const result = await host.runtime.refresh({ providers: [CHINA.provider], allowNetwork: true });
+
+    expect(result.errors.size).toBe(0);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(await host.runtime.checkAuth(CHINA.provider)).toBeUndefined();
+  });
+
+  it("prefers a stored key over the env var", async () => {
+    vi.stubEnv(GLOBAL.env, "env-key");
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(listResponse(["MiniMax-M3"]));
+    const host = await createHost();
+
+    await host.runtime.refresh({ providers: [GLOBAL.provider], allowNetwork: true, force: true });
+
+    expect(
+      new Headers((fetch.mock.calls[0]?.[1] as RequestInit | undefined)?.headers ?? {}).get(
+        "authorization",
+      ),
+    ).toBe(`Bearer ${GLOBAL.provider}-test-key`);
+  });
+
+  it("makes env-only models available after an offline startup refresh", async () => {
+    vi.stubEnv(GLOBAL.env, "env-key");
+    const host = await createHost(undefined, { credentials: false });
+
+    await host.runtime.refresh({ allowNetwork: false });
+
+    const available = host.runtime.getAvailableSnapshot().map((m) => `${m.provider}/${m.id}`);
+    expect(available).toContain("minimax-openai/MiniMax-M3.1-Flash");
+    expect(available.filter((id) => id.startsWith("minimax-openai-cn/"))).toEqual([]);
+  });
+
+  it("restores a 0.5.0 cache entry without fetching", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch");
+    const modelsStore = new InMemoryModelsStore();
+    await modelsStore.write(GLOBAL.provider, {
+      models: [cachedRecord(GLOBAL, "MiniMax-M3")],
+      checkedAt: Date.now(),
+    });
+    const host = await createHost(modelsStore);
+
+    const result = await host.runtime.refresh({ providers: [GLOBAL.provider], allowNetwork: true });
+
+    expect(result.errors.size).toBe(0);
+    expect(fetch).not.toHaveBeenCalled();
+    expect(idsOf(host.runtime.getModels(GLOBAL.provider))).toEqual(["MiniMax-M3"]);
+  });
+
+  it("applies models.json overrides to native models", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "minimax-models-"));
+    const modelsPath = join(dir, "models.json");
+    writeFileSync(
+      modelsPath,
+      JSON.stringify({
+        providers: {
+          "minimax-openai": { modelOverrides: { "MiniMax-M3": { name: "M3 override" } } },
+        },
+      }),
+    );
+    const host = await createHost(undefined, { modelsPath });
+
+    expect(host.runtime.getModel(GLOBAL.provider, "MiniMax-M3")?.name).toBe("M3 override");
+  });
+
   it("replaces the baseline through accepted publication and restores the subset offline", async () => {
     const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(listResponse(["MiniMax-M3"]));
     const host = await createHost();
@@ -415,8 +562,11 @@ describe("MiniMax discovery in the real Pi host", () => {
   it("keeps prior catalog state when callback persistence throws", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(listResponse(["MiniMax-M3"]));
     const host = await createHost();
-    wrapPersistence(host, GLOBAL.provider, async () => {
-      throw new Error("sentinel-runtime-persist-key");
+    wrapPersistence(host, GLOBAL.provider, async (publication) => {
+      const { persist, update } = publication as { persist?: unknown; update?: () => void };
+      if (persist) throw new Error("sentinel-runtime-persist-key");
+      update?.();
+      return true;
     });
 
     const result = await host.runtime.refresh({

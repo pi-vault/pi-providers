@@ -17,11 +17,12 @@ describe("providers extension", () => {
     expect(
       new Set(commandCodeProvider.getModels().map((model: { api: string }) => model.api)),
     ).toEqual(new Set(["anthropic-messages", "openai-completions", "openai-responses"]));
-    expect(registerProvider.mock.calls.slice(1).map((call: unknown[]) => call[0])).toEqual([
-      "minimax-openai",
-      "minimax-openai-cn",
-      "stepfun-ai",
-    ]);
+    expect(
+      registerProvider.mock.calls
+        .slice(1, 3)
+        .map((call: unknown[]) => (call[0] as { id: string }).id),
+    ).toEqual(["minimax-openai", "minimax-openai-cn"]);
+    expect(registerProvider.mock.calls[3]?.[0]).toBe("stepfun-ai");
 
     expect(registerTool).toHaveBeenCalledTimes(1);
     expect(registerTool.mock.calls[0]?.[0]).toMatchObject({
@@ -30,66 +31,50 @@ describe("providers extension", () => {
     });
   });
 
-  it("minimax-openai uses global endpoint and key", () => {
+  function minimaxProviders() {
     const registerProvider = vi.fn();
     const registerTool = vi.fn();
     const mockPi = { registerProvider, registerTool } as unknown as Parameters<
       typeof createExtension
     >[0];
-
     createExtension(mockPi);
+    const find = (id: string) =>
+      registerProvider.mock.calls
+        .map((call: unknown[]) => call[0])
+        .find((provider) => (provider as { id?: string })?.id === id) as {
+        id: string;
+        baseUrl: string;
+        refreshModels: unknown;
+        getModels(): { id: string }[];
+        streamSimple: unknown;
+      };
+    return { global: find("minimax-openai"), china: find("minimax-openai-cn") };
+  }
 
-    const globalCall = registerProvider.mock.calls.find(
-      (call: unknown[]) => call[0] === "minimax-openai",
-    );
-    expect(globalCall).toBeDefined();
-    expect(globalCall?.[1].baseUrl).toBe("https://api.minimax.io/v1");
-    expect(globalCall?.[1].apiKey).toBe("$MINIMAX_API_KEY");
-    expect(typeof globalCall?.[1].refreshModels).toBe("function");
+  it("minimax-openai uses the global endpoint", () => {
+    const { global } = minimaxProviders();
+    expect(global.baseUrl).toBe("https://api.minimax.io/v1");
+    expect(typeof global.refreshModels).toBe("function");
   });
 
-  it("minimax-openai-cn uses CN endpoint and key", () => {
-    const registerProvider = vi.fn();
-    const registerTool = vi.fn();
-    const mockPi = { registerProvider, registerTool } as unknown as Parameters<
-      typeof createExtension
-    >[0];
-
-    createExtension(mockPi);
-
-    const cnCall = registerProvider.mock.calls.find(
-      (call: unknown[]) => call[0] === "minimax-openai-cn",
-    );
-    expect(cnCall).toBeDefined();
-    expect(cnCall?.[1].baseUrl).toBe("https://api.minimaxi.com/v1");
-    expect(cnCall?.[1].apiKey).toBe("$MINIMAX_CN_API_KEY");
-    expect(typeof cnCall?.[1].refreshModels).toBe("function");
+  it("minimax-openai-cn uses the CN endpoint", () => {
+    const { china } = minimaxProviders();
+    expect(china.baseUrl).toBe("https://api.minimaxi.com/v1");
+    expect(typeof china.refreshModels).toBe("function");
   });
 
   it("keeps MiniMax registrations distinct while preserving their contract", () => {
-    const registerProvider = vi.fn();
-    const registerTool = vi.fn();
-    const mockPi = { registerProvider, registerTool } as unknown as Parameters<
-      typeof createExtension
-    >[0];
-
-    createExtension(mockPi);
-
-    const globalCall = registerProvider.mock.calls.find(
-      (call: unknown[]) => call[0] === "minimax-openai",
-    );
-    const cnCall = registerProvider.mock.calls.find(
-      (call: unknown[]) => call[0] === "minimax-openai-cn",
-    );
-    expect(globalCall?.[1].refreshModels).not.toBe(cnCall?.[1].refreshModels);
-    expect(globalCall?.[1].models.map((model: { id: string }) => model.id)).toEqual([
+    const { global, china } = minimaxProviders();
+    expect(global).not.toBe(china);
+    expect(global.refreshModels).not.toBe(china.refreshModels);
+    expect(global.getModels().map((model) => model.id)).toEqual([
       "MiniMax-M3.1-Flash",
       "MiniMax-M3",
     ]);
-    expect(cnCall?.[1].models.map((model: { id: string }) => model.id)).toEqual([
+    expect(china.getModels().map((model) => model.id)).toEqual([
       "MiniMax-M3.1-Flash",
       "MiniMax-M3",
     ]);
-    expect(globalCall?.[1].streamSimple).not.toBe(cnCall?.[1].streamSimple);
+    expect(global.streamSimple).not.toBe(china.streamSimple);
   });
 });
