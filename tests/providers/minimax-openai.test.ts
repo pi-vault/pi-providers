@@ -17,7 +17,11 @@ import {
   getSupportedThinkingLevels,
 } from "@earendil-works/pi-ai";
 import { getApiProvider } from "@earendil-works/pi-ai/compat";
-import { registerMiniMax } from "../../src/providers/minimax-openai.ts";
+import {
+  createMiniMaxProvider,
+  MINIMAX_REGIONS,
+  registerMiniMax,
+} from "../../src/providers/minimax-openai.ts";
 
 const MINIMAX_OPENAI_COMPAT = {
   supportsStore: false,
@@ -359,5 +363,89 @@ describe("streamSimple pipeline", () => {
     );
     expect(toolcallEnd).toBeDefined();
     expect(toolcallEnd!.toolCall.arguments).toEqual({ path: "foo" });
+  });
+});
+
+describe("createMiniMaxProvider", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function textStream(text: string) {
+    const msg = {
+      role: "assistant",
+      content: [],
+      api: "openai-completions",
+      provider: "test",
+      model: "MiniMax-M3",
+      usage: emptyUsage(),
+      stopReason: "stop",
+      timestamp: Date.now(),
+    } as unknown as AssistantMessage;
+    const base = createAssistantMessageEventStream();
+    base.push({ type: "start", partial: msg });
+    base.push({ type: "text_start", contentIndex: 0, partial: msg });
+    base.push({ type: "text_delta", contentIndex: 0, delta: text, partial: msg });
+    base.push({ type: "text_end", contentIndex: 0, content: text, partial: msg });
+    base.push({ type: "done", reason: "stop", message: msg });
+    return base;
+  }
+
+  it.each(["stream", "streamSimple"] as const)(
+    "routes %s through the hardening pipeline",
+    async (method) => {
+      const driver = vi.fn((..._args: unknown[]) => textStream("<think>hidden</think>visible"));
+      vi.mocked(getApiProvider).mockReturnValue({
+        stream: driver,
+        streamSimple: driver,
+      } as unknown as ReturnType<typeof getApiProvider>);
+      const provider = createMiniMaxProvider(MINIMAX_REGIONS[0]);
+      const model = { id: "MiniMax-M3", provider: "minimax-openai", api: "minimax-openai" };
+
+      const events: AssistantMessageEvent[] = [];
+      for await (const event of provider[method](
+        model as unknown as Model<Api>,
+        { messages: [] } as never,
+        undefined,
+      )) {
+        events.push(event);
+      }
+
+      expect(driver).toHaveBeenCalledOnce();
+      expect(driver.mock.calls[0]?.[0]).toMatchObject({
+        id: "MiniMax-M3",
+        api: "openai-completions",
+      });
+      const text = events
+        .filter(
+          (e): e is Extract<AssistantMessageEvent, { type: "text_delta" }> =>
+            e.type === "text_delta",
+        )
+        .map((e) => e.delta)
+        .join("");
+      expect(text).toBe("visible");
+    },
+  );
+
+  it("describes the two regions with their key variables", async () => {
+    expect(MINIMAX_REGIONS.map((region) => region.id)).toEqual([
+      "minimax-openai",
+      "minimax-openai-cn",
+    ]);
+    for (const region of MINIMAX_REGIONS) {
+      const provider = createMiniMaxProvider(region);
+      expect(provider).toMatchObject({ id: region.id, name: region.name, baseUrl: region.baseUrl });
+      const ctx = (value?: string) => ({
+        env: async (name: string) => (name === region.envVar ? value : undefined),
+        fileExists: async () => false,
+      });
+      const signal = new AbortController().signal;
+      await expect(provider.auth.apiKey?.resolve({ ctx: ctx("k"), signal })).resolves.toMatchObject(
+        { auth: { apiKey: "k" } },
+      );
+      await expect(provider.auth.apiKey?.resolve({ ctx: ctx(undefined), signal })).resolves.toBe(
+        undefined,
+      );
+    }
   });
 });

@@ -1,6 +1,6 @@
 // src/providers/minimax-openai/catalog.ts
 
-import type { Api, Model, RefreshModelsContext } from "@earendil-works/pi-ai";
+import type { Api, Model, Provider, RefreshModelsContext } from "@earendil-works/pi-ai";
 import { MINIMAX_MODELS, type MiniMaxModelConfig } from "./models.ts";
 
 const CATALOG_REFRESH_INTERVAL_MS = 4 * 60 * 60 * 1000;
@@ -196,5 +196,122 @@ export function createMiniMaxModelRefresh(
     }
 
     return discoverModels(context, providerId, baseUrl, restored.models, apiKey);
+  };
+}
+
+/** Curated models for a region in curated order, optionally limited to `ids`. */
+export function canonicalMiniMaxModels(
+  providerId: string,
+  baseUrl: string,
+  ids?: ReadonlySet<string>,
+): Model<Api>[] {
+  return MINIMAX_MODELS.filter((definition) => !ids || ids.has(definition.id)).map((definition) =>
+    canonicalModel(definition, providerId, baseUrl),
+  );
+}
+
+/** Authenticated `${baseUrl}/models` discovery; the caller owns timeout and publication. */
+export async function fetchMiniMaxModels(
+  context: RefreshModelsContext,
+  providerId: string,
+  baseUrl: string,
+): Promise<Model<Api>[]> {
+  const apiKey = usableApiKey(context);
+  if (!apiKey) throw new Error(DISCOVERY_FAILED_MESSAGE);
+  const { signal } = context;
+
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl}/models`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal,
+    });
+  } catch {
+    signal.throwIfAborted();
+    throw new Error(DISCOVERY_FAILED_MESSAGE);
+  }
+  if (!response.ok) throw new Error(`${DISCOVERY_FAILED_MESSAGE} (HTTP ${response.status})`);
+
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    signal.throwIfAborted();
+    throw new Error(INVALID_CATALOG_MESSAGE);
+  }
+  signal.throwIfAborted();
+
+  return canonicalMiniMaxModels(providerId, baseUrl, new Set(liveModelIds(payload)));
+}
+
+/**
+ * Wraps a `createProvider` provider with MiniMax catalog semantics: the model list is the curated
+ * set filtered by an authoritative ID set (restored from cache or published by discovery), and
+ * refresh restores, throttles, times out, and sanitizes errors.
+ */
+export function withMiniMaxCatalog(
+  provider: Provider,
+  providerId: string,
+  baseUrl: string,
+): Provider {
+  let ids: ReadonlySet<string> | undefined; // undefined = curated baseline
+  const models = () => canonicalMiniMaxModels(providerId, baseUrl, ids);
+  const generatedRefresh = provider.refreshModels;
+
+  return {
+    ...provider,
+    getModels: models,
+    getAllModels: models,
+    refreshModels: async (context) => {
+      context.signal.throwIfAborted();
+      const restored = restoreCatalog(context.stored, providerId, baseUrl);
+      const restoredIds = restored.compatible
+        ? new Set(restored.models.map((model) => model.id))
+        : undefined;
+      if (
+        !(await context.publish({
+          update: () => {
+            ids = restoredIds;
+          },
+        }))
+      ) {
+        return;
+      }
+      if (!context.allowNetwork || !usableApiKey(context) || !generatedRefresh) return;
+      if (!context.force && restored.compatible && isFresh(restored.checkedAt, Date.now())) return;
+
+      const discovery = AbortSignal.any([
+        context.signal,
+        AbortSignal.timeout(DISCOVERY_TIMEOUT_MS),
+      ]);
+      const timedOut = () => discovery.aborted && !context.signal.aborted;
+      try {
+        await generatedRefresh({
+          ...context,
+          stored: undefined,
+          signal: discovery,
+          publish: async (publication) => {
+            const published = new Set(publication.persist?.models.map((model) => model.id) ?? []);
+            try {
+              return await context.publish({
+                ...publication,
+                update: () => {
+                  if (discovery.aborted) return; // persisted after the deadline: keep prior state
+                  publication.update?.();
+                  ids = published;
+                },
+              });
+            } catch {
+              throw new Error(PERSISTENCE_FAILED_MESSAGE);
+            }
+          },
+        });
+      } catch (error) {
+        if (timedOut()) throw new Error(DISCOVERY_TIMEOUT_MESSAGE);
+        throw error;
+      }
+      if (timedOut()) throw new Error(DISCOVERY_TIMEOUT_MESSAGE);
+    },
   };
 }
