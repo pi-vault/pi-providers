@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Opening the model selector no longer shows `Could not refresh minimax-openai-cn; showing cached models.` (or the same warning for `minimax-openai`) when that region has no key. The MiniMax regions are now native providers that treat a missing key as not configured, so Pi skips their catalog refresh instead of failing on the unset environment variable. Configured regions keep their discovery, four-hour throttle, regional caches, and stream hardening.
+
 ## 2026-10-25 - [0.5.0]
 
 ### Added

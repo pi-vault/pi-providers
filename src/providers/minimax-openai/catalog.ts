@@ -113,90 +113,10 @@ function canonicalModel(
   };
 }
 
-function ensureActive(callerSignal: AbortSignal, signal: AbortSignal): void {
-  if (callerSignal.aborted) callerSignal.throwIfAborted();
-  if (signal.aborted) throw new Error(DISCOVERY_TIMEOUT_MESSAGE);
-}
-
 function usableApiKey(context: RefreshModelsContext): string | undefined {
   const credential = context.credential;
   if (credential?.type !== "api_key" || typeof credential.key !== "string") return undefined;
   return credential.key.trim() ? credential.key : undefined;
-}
-
-async function discoverModels(
-  context: RefreshModelsContext,
-  providerId: string,
-  baseUrl: string,
-  prior: MiniMaxModelConfig[],
-  apiKey: string,
-): Promise<MiniMaxModelConfig[]> {
-  const signal = AbortSignal.any([context.signal, AbortSignal.timeout(DISCOVERY_TIMEOUT_MS)]);
-
-  let response: Response;
-  try {
-    response = await fetch(`${baseUrl}/models`, {
-      method: "GET",
-      headers: { Authorization: `Bearer ${apiKey}` },
-      signal,
-    });
-  } catch {
-    ensureActive(context.signal, signal);
-    throw new Error(DISCOVERY_FAILED_MESSAGE);
-  }
-
-  if (!response.ok) {
-    throw new Error(`${DISCOVERY_FAILED_MESSAGE} (HTTP ${response.status})`);
-  }
-
-  let payload: unknown;
-  try {
-    payload = await response.json();
-  } catch {
-    ensureActive(context.signal, signal);
-    throw new Error(INVALID_CATALOG_MESSAGE);
-  }
-
-  ensureActive(context.signal, signal);
-
-  const liveIds = new Set(liveModelIds(payload));
-  const candidates = cloneDefinitions(
-    MINIMAX_MODELS.filter((definition) => liveIds.has(definition.id)),
-  );
-  const models = candidates.map((definition) => canonicalModel(definition, providerId, baseUrl));
-
-  let published: boolean;
-  try {
-    published = await context.publish({
-      persist: { models, checkedAt: Date.now() },
-    });
-  } catch {
-    ensureActive(context.signal, signal);
-    throw new Error(PERSISTENCE_FAILED_MESSAGE);
-  }
-
-  if (context.signal.aborted) return prior;
-  ensureActive(context.signal, signal);
-  return published ? candidates : prior;
-}
-
-export function createMiniMaxModelRefresh(
-  providerId: string,
-  baseUrl: string,
-): (context: RefreshModelsContext) => Promise<MiniMaxModelConfig[]> {
-  return async (context) => {
-    context.signal.throwIfAborted();
-
-    const restored = restoreCatalog(context.stored, providerId, baseUrl);
-    const apiKey = usableApiKey(context);
-
-    if (!context.allowNetwork || !apiKey) return restored.models;
-    if (!context.force && restored.compatible && isFresh(restored.checkedAt, Date.now())) {
-      return restored.models;
-    }
-
-    return discoverModels(context, providerId, baseUrl, restored.models, apiKey);
-  };
 }
 
 /** Curated models for a region in curated order, optionally limited to `ids`. */

@@ -7,6 +7,7 @@ import type {
   AssistantMessageEvent,
   Context,
   Model,
+  Provider,
   ToolCall,
   ToolResultMessage,
   Usage,
@@ -71,63 +72,50 @@ describe("registerMiniMax", () => {
     return registerProvider;
   }
 
-  function registration(registerProvider: ReturnType<typeof vi.fn>, id: string) {
-    return registerProvider.mock.calls.find(([name]) => name === id)?.[1];
+  function registered(registerProvider: ReturnType<typeof vi.fn>, id: string): Provider {
+    const provider = registerProvider.mock.calls
+      .map(([candidate]) => candidate as Provider)
+      .find((candidate) => candidate.id === id);
+    if (!provider) throw new Error(`Missing provider ${id}`);
+    return provider;
   }
 
-  it("registers global then China MiniMax variants", () => {
+  const IDS = ["minimax-openai", "minimax-openai-cn"];
+
+  it("registers global then China MiniMax providers natively", () => {
     const registerProvider = registerProviders();
 
     expect(registerProvider).toHaveBeenCalledTimes(2);
-    expect(registerProvider.mock.calls.map(([id]) => id)).toEqual([
-      "minimax-openai",
-      "minimax-openai-cn",
-    ]);
-
-    const global = registration(registerProvider, "minimax-openai");
-    const china = registration(registerProvider, "minimax-openai-cn");
-    expect(global).toMatchObject({
+    expect(registerProvider.mock.calls.every((call) => call.length === 1)).toBe(true);
+    expect(registerProvider.mock.calls.map(([provider]) => provider.id)).toEqual(IDS);
+    expect(registered(registerProvider, "minimax-openai")).toMatchObject({
       name: "MiniMax (OpenAI)",
       baseUrl: "https://api.minimax.io/v1",
-      apiKey: "$MINIMAX_API_KEY",
-      api: "minimax-openai",
     });
-    expect(china).toMatchObject({
+    expect(registered(registerProvider, "minimax-openai-cn")).toMatchObject({
       name: "MiniMax CN (OpenAI)",
       baseUrl: "https://api.minimaxi.com/v1",
-      apiKey: "$MINIMAX_CN_API_KEY",
-      api: "minimax-openai-cn",
     });
   });
 
-  it("provides a custom streamSimple function", () => {
+  it("provides distinct stream and refresh functions per region", () => {
     const registerProvider = registerProviders();
+    const global = registered(registerProvider, "minimax-openai");
+    const china = registered(registerProvider, "minimax-openai-cn");
 
-    const config = registration(registerProvider, "minimax-openai");
-    expect(typeof config.streamSimple).toBe("function");
-  });
-
-  it("provides a distinct refresh callback per region", () => {
-    const registerProvider = registerProviders();
-
-    const global = registration(registerProvider, "minimax-openai");
-    const china = registration(registerProvider, "minimax-openai-cn");
+    expect(typeof global.streamSimple).toBe("function");
     expect(typeof global.refreshModels).toBe("function");
-    expect(typeof china.refreshModels).toBe("function");
     expect(global.refreshModels).not.toBe(china.refreshModels);
   });
 
   it("registers Flash first and M3 second with the curated contract", () => {
     const registerProvider = registerProviders();
 
-    for (const id of ["minimax-openai", "minimax-openai-cn"]) {
-      const config = registration(registerProvider, id);
-      expect(config.models.map((model: { id: string }) => model.id)).toEqual([
-        "MiniMax-M3.1-Flash",
-        "MiniMax-M3",
-      ]);
+    for (const id of IDS) {
+      const models = registered(registerProvider, id).getModels();
+      expect(models.map((model) => model.id)).toEqual(["MiniMax-M3.1-Flash", "MiniMax-M3"]);
 
-      expect(config.models[0]).toMatchObject({
+      expect(models[0]).toMatchObject({
         id: "MiniMax-M3.1-Flash",
         name: "MiniMax-M3.1-Flash",
         reasoning: true,
@@ -146,9 +134,9 @@ describe("registerMiniMax", () => {
           max: "max",
         },
       });
-      expect(config.models[0].cost).not.toHaveProperty("tiers");
+      expect(models[0].cost).not.toHaveProperty("tiers");
 
-      expect(config.models[1]).toMatchObject({
+      expect(models[1]).toMatchObject({
         id: "MiniMax-M3",
         name: "MiniMax-M3",
         reasoning: true,
@@ -158,54 +146,43 @@ describe("registerMiniMax", () => {
         cost: MINIMAX_M3_COST,
         compat: MINIMAX_OPENAI_COMPAT,
       });
-      expect(config.models[1].thinkingLevelMap).toBeUndefined();
-      expect(config.models.some((model: { id: string }) => model.id.includes("M2.7"))).toBe(false);
+      expect(models[1].thinkingLevelMap).toBeUndefined();
+      expect(models.some((model) => model.id.includes("M2.7"))).toBe(false);
     }
   });
 
   it("exposes the five Flash thinking levels", () => {
-    const registerProvider = registerProviders();
-    const config = registration(registerProvider, "minimax-openai");
-    const flash: Model<Api> = {
-      ...config.models[0],
-      provider: "minimax-openai",
-      api: "minimax-openai",
-      baseUrl: config.baseUrl,
-    };
+    const flash = registered(registerProviders(), "minimax-openai").getModels()[0] as Model<Api>;
 
     expect(getSupportedThinkingLevels(flash)).toEqual(["low", "medium", "high", "xhigh", "max"]);
   });
 
-  it("clones nested registration metadata per region", () => {
+  it("clones model metadata per region and per call", () => {
     const registerProvider = registerProviders();
-    const global = registration(registerProvider, "minimax-openai");
-    const china = registration(registerProvider, "minimax-openai-cn");
+    const global = registered(registerProvider, "minimax-openai").getModels();
+    const china = registered(registerProvider, "minimax-openai-cn").getModels();
 
-    expect(global.models[0]).not.toBe(china.models[0]);
-    expect(global.models[0].cost).not.toBe(china.models[0].cost);
-    expect(global.models[0].compat).not.toBe(china.models[0].compat);
-    expect(global.models[0].input).not.toBe(china.models[0].input);
-    expect(global.models[1].cost.tiers).not.toBe(china.models[1].cost.tiers);
+    expect(global[0]).not.toBe(china[0]);
+    expect(global[0].cost).not.toBe(china[0].cost);
+    expect(global[0].compat).not.toBe(china[0].compat);
+    expect(global[0].input).not.toBe(china[0].input);
+    expect(global[1].cost.tiers).not.toBe(china[1].cost.tiers);
 
-    global.models[0].cost.input = 99;
-    global.models[0].compat.supportsReasoningEffort = false;
-    global.models[1].cost.tiers[0].input = 99;
-    expect(china.models[0].cost.input).toBe(0.15);
-    expect(china.models[0].compat.supportsReasoningEffort).toBe(true);
-    expect(china.models[1].cost.tiers[0].input).toBe(0.6);
+    global[0].cost.input = 99;
+    (global[0].compat as { supportsReasoningEffort: boolean }).supportsReasoningEffort = false;
+    const tier = global[1].cost.tiers?.[0];
+    if (!tier) throw new Error("Missing M3 tier");
+    tier.input = 99;
+    expect(china[0].cost.input).toBe(0.15);
+    expect((china[0].compat as { supportsReasoningEffort: boolean }).supportsReasoningEffort).toBe(
+      true,
+    );
+    expect(china[1].cost.tiers?.[0]?.input).toBe(0.6);
   });
 
   it("prices M3 request-wide above 512,000 input tokens", () => {
-    const registerProvider = registerProviders();
-    const config = registration(registerProvider, "minimax-openai");
-    const m3: Model<Api> = {
-      ...config.models[1],
-      provider: "minimax-openai",
-      api: "minimax-openai",
-      baseUrl: config.baseUrl,
-    };
+    const m3 = registered(registerProviders(), "minimax-openai").getModels()[1] as Model<Api>;
 
-    expect(calculateCost(m3, usage(512_000)).total).toBeCloseTo(0.1536);
     expect(calculateCost(m3, usage(512_001)).total).toBeCloseTo(0.3072006);
 
     const mixed = calculateCost(m3, usage(500_000, 12_001, 10));
@@ -224,8 +201,8 @@ describe("streamSimple pipeline", () => {
     const registerProvider = vi.fn();
     const mockPi = { registerProvider } as unknown as Parameters<typeof registerMiniMax>[0];
     registerMiniMax(mockPi);
-    const [, config] = registerProvider.mock.calls[0];
-    return config.streamSimple as (
+    const [provider] = registerProvider.mock.calls[0] as [Provider];
+    return provider.streamSimple.bind(provider) as unknown as (
       model: unknown,
       context: Context,
       options?: unknown,

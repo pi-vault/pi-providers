@@ -7,13 +7,14 @@ import type {
   AssistantMessageEvent,
   Context,
   Model,
+  Provider,
   SimpleStreamOptions,
   ThinkingLevel,
   ToolCall,
   ToolResultMessage,
 } from "@earendil-works/pi-ai";
 import { normalizeContext } from "@earendil-works/pi-ai";
-import type { ExtensionAPI, ProviderConfig } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerMiniMax } from "../../../src/providers/minimax-openai.ts";
 
 const FLASH = "MiniMax-M3.1-Flash";
@@ -58,37 +59,36 @@ type WireBody = {
   stream_options?: { include_usage: boolean };
 };
 
-function registerProviders(): Map<string, ProviderConfig> {
-  const registrations = new Map<string, ProviderConfig>();
+function registerProviders(): Map<string, Provider> {
+  const registrations = new Map<string, Provider>();
   const pi = {
-    registerProvider(name: string, config: ProviderConfig) {
-      registrations.set(name, config);
+    registerProvider(provider: Provider) {
+      registrations.set(provider.id, provider);
     },
   } as unknown as ExtensionAPI;
   registerMiniMax(pi);
   return registrations;
 }
 
-function registrationFor(registrations: Map<string, ProviderConfig>, provider: string) {
+function registrationFor(registrations: Map<string, Provider>, provider: string) {
   const config = registrations.get(provider);
   if (!config) throw new Error(`Missing provider registration: ${provider}`);
   return config;
 }
 
-function streamSimpleFor(config: ProviderConfig) {
-  const streamSimple = config.streamSimple;
-  if (!streamSimple) throw new Error("Missing streamSimple registration");
+function streamSimpleFor(config: Provider) {
+  const streamSimple = config.streamSimple.bind(config);
   return streamSimple;
 }
 
-function modelFor(config: ProviderConfig, region: (typeof REGIONS)[number], id: string) {
-  const model = config.models?.find((candidate) => candidate.id === id);
+function modelFor(config: Provider, region: (typeof REGIONS)[number], id: string) {
+  const model = config.getModels().find((candidate) => candidate.id === id);
   if (!model) throw new Error(`Missing registered model: ${id}`);
   return {
     ...model,
     provider: region.provider,
     api: region.provider,
-    baseUrl: config.baseUrl ?? region.baseUrl,
+    baseUrl: region.baseUrl,
   } as Model<Api>;
 }
 
@@ -190,7 +190,7 @@ type RunOptions = SimpleStreamOptions & {
 };
 
 async function runStream(
-  config: ProviderConfig,
+  config: Provider,
   model: Model<Api>,
   context: Context,
   response: () => Response,
@@ -635,13 +635,13 @@ describe("MiniMax native reasoning replay", () => {
 });
 
 describe("MiniMax registration data", () => {
-  it("keeps regional URLs and key expressions", () => {
+  it("keeps regional URLs and provider identity", () => {
     const registrations = registerProviders();
     for (const region of REGIONS) {
       const config = registrationFor(registrations, region.provider);
       expect(config.baseUrl).toBe(region.baseUrl);
-      expect(config.apiKey).toBe(region.apiKey);
-      expect(config.api).toBe(region.provider);
+      expect(config.id).toBe(region.provider);
+      expect(config.getModels().every((model) => model.api === region.provider)).toBe(true);
     }
   });
 });
